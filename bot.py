@@ -775,141 +775,143 @@ async def extract_images_from_nitter(tweet_id: str, update: Update) -> bool:
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'same-origin',
-        'Sec-Fetch-User': '?1'
+        'Sec-Fetch-User': '?1',
+        'Cookie': 'hlsPlayback=on; theme=light; replaceTwitter=nitter.net; replaceX=nitter.net; proxyVideos=1; hideImages=off; hideBanner=off; showRss=off; useStreaming=off; autoPlay=off; infiniteScroll=off'
     }
     
-    for nitter_url in nitter_urls:
-        if media_found:
-            break
-            
-        try:
-            logger.info(f"Trying Nitter URL: {nitter_url}")
-            
-            # 發送請求 - 增加超時時間和重試機制
-            max_retries = 3
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    logger.info(f"Sending request to: {nitter_url} (attempt {retry_count + 1})")
-                    response = requests.get(nitter_url, headers=headers, timeout=30)
-                    
-                    # 檢查響應狀態
-                    if response.status_code == 200:
-                        break
-                    elif response.status_code == 429:  # Too Many Requests
-                        logger.warning("Rate limited by Nitter, waiting before retry...")
-                        await asyncio.sleep(5)  # 等待 5 秒後重試
-                    else:
-                        logger.warning(f"Failed to access Nitter, status code: {response.status_code}")
-                    
-                    retry_count += 1
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Request error: {str(e)}")
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        await asyncio.sleep(2)  # 等待 2 秒後重試
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+        for nitter_url in nitter_urls:
+            if media_found:
+                break
+                
+            try:
+                logger.info(f"Trying Nitter URL: {nitter_url}")
+                
+                # 發送請求 - 增加超時時間和重試機制
+                max_retries = 3
+                retry_count = 0
+                while retry_count < max_retries:
+                    try:
+                        logger.info(f"Sending request to: {nitter_url} (attempt {retry_count + 1})")
+                        response = await client.get(nitter_url, headers=headers)
+                        
+                        # 檢查響應狀態
+                        if response.status_code == 200:
+                            break
+                        elif response.status_code == 429:  # Too Many Requests
+                            logger.warning("Rate limited by Nitter, waiting before retry...")
+                            await asyncio.sleep(5)  # 等待 5 秒後重試
+                        else:
+                            logger.warning(f"Failed to access Nitter, status code: {response.status_code}")
+                        
+                        retry_count += 1
+                    except httpx.RequestError as e:
+                        logger.error(f"Request error: {str(e)}")
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            await asyncio.sleep(2)  # 等待 2 秒後重試
+                        continue
+                
+                if retry_count == max_retries:
+                    logger.error("Max retries reached for Nitter request")
                     continue
-            
-            if retry_count == max_retries:
-                logger.error("Max retries reached for Nitter request")
-                continue
-            
-            # 獲取頁面內容
-            nitter_content = response.text
-            logger.info(f"Nitter page content length: {len(nitter_content)}")
-            
-            # 檢查頁面是否為空
-            if len(nitter_content) < 100:
-                logger.warning("Nitter page content is too short, might be an error page")
-                continue
-            
-            # 檢查頁面是否包含錯誤訊息
-            if "Error loading tweet" in nitter_content or "Tweet not found" in nitter_content:
-                logger.warning("Tweet not found on Nitter")
-                continue
-            
-            # 使用 BeautifulSoup 解析頁面
-            logger.info("Parsing Nitter page with BeautifulSoup...")
-            nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
-            
-            # 直接查找所有圖片標籤
-            logger.info("Searching for all img tags...")
-            all_images = nitter_soup.find_all('img')
-            logger.info(f"Found {len(all_images)} total img tags")
-            
-            # 過濾出可能是推文圖片的圖片
-            nitter_images = []
-            for img in all_images:
-                src = img.get('src', '')
-                if src and ('pbs.twimg.com/media/' in src or 'pbs.twimg.com/tweet_video_thumb/' in src):
-                    nitter_images.append(img)
-            
-            logger.info(f"Filtered to {len(nitter_images)} potential tweet images")
-            
-            # 如果沒有找到圖片，嘗試查找帶有特定類的圖片
-            if not nitter_images:
-                logger.info("No images found with src filtering, trying specific classes...")
                 
-                # 方法 1: 查找帶有 tweet-image 類的圖片
-                tweet_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
-                logger.info(f"Found {len(tweet_images)} images with class 'tweet-image'")
+                # 獲取頁面內容
+                nitter_content = response.text
+                logger.info(f"Nitter page content length: {len(nitter_content)}")
                 
-                # 方法 2: 查找帶有 media-item 類的圖片
-                media_items = nitter_soup.find_all('div', {'class': 'media-item'})
-                for item in media_items:
-                    img = item.find('img')
-                    if img:
-                        nitter_images.append(img)
-                logger.info(f"Found {len(nitter_images)} images with class 'media-item'")
+                # 檢查頁面是否為空
+                if len(nitter_content) < 100:
+                    logger.warning("Nitter page content is too short, might be an error page")
+                    continue
                 
-                # 方法 3: 查找帶有 media-container 類的容器
-                media_containers = nitter_soup.find_all('div', {'class': 'media-container'})
-                for container in media_containers:
-                    img = container.find('img')
-                    if img:
-                        nitter_images.append(img)
-                logger.info(f"Found {len(nitter_images)} images in media-container")
-            
-            # 如果仍然沒有找到圖片，嘗試查找所有可能的圖片
-            if not nitter_images:
-                logger.info("No images found with specific classes, trying all images...")
+                # 檢查頁面是否包含錯誤訊息
+                if "Error loading tweet" in nitter_content or "Tweet not found" in nitter_content:
+                    logger.warning("Tweet not found on Nitter")
+                    continue
+                
+                # 使用 BeautifulSoup 解析頁面
+                logger.info("Parsing Nitter page with BeautifulSoup...")
+                nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
+                
+                # 直接查找所有圖片標籤
+                logger.info("Searching for all img tags...")
+                all_images = nitter_soup.find_all('img')
+                logger.info(f"Found {len(all_images)} total img tags")
+                
+                # 過濾出可能是推文圖片的圖片
+                nitter_images = []
                 for img in all_images:
                     src = img.get('src', '')
-                    if src and not src.startswith('data:'):  # 排除 base64 編碼的圖片
+                    if src and ('pbs.twimg.com/media/' in src or 'pbs.twimg.com/tweet_video_thumb/' in src):
                         nitter_images.append(img)
-                logger.info(f"Added {len(nitter_images)} additional images")
-            
-            if nitter_images:
-                logger.info(f"Found {len(nitter_images)} images on Nitter")
-                for img in nitter_images:
-                    img_url = img.get('src', '')
-                    if not img_url:
-                        continue
+                
+                logger.info(f"Filtered to {len(nitter_images)} potential tweet images")
+                
+                # 如果沒有找到圖片，嘗試查找帶有特定類的圖片
+                if not nitter_images:
+                    logger.info("No images found with src filtering, trying specific classes...")
+                    
+                    # 方法 1: 查找帶有 tweet-image 類的圖片
+                    tweet_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
+                    logger.info(f"Found {len(tweet_images)} images with class 'tweet-image'")
+                    
+                    # 方法 2: 查找帶有 media-item 類的圖片
+                    media_items = nitter_soup.find_all('div', {'class': 'media-item'})
+                    for item in media_items:
+                        img = item.find('img')
+                        if img:
+                            nitter_images.append(img)
+                    logger.info(f"Found {len(nitter_images)} images with class 'media-item'")
+                    
+                    # 方法 3: 查找帶有 media-container 類的容器
+                    media_containers = nitter_soup.find_all('div', {'class': 'media-container'})
+                    for container in media_containers:
+                        img = container.find('img')
+                        if img:
+                            nitter_images.append(img)
+                    logger.info(f"Found {len(nitter_images)} images in media-container")
+                
+                # 如果仍然沒有找到圖片，嘗試查找所有可能的圖片
+                if not nitter_images:
+                    logger.info("No images found with specific classes, trying all images...")
+                    for img in all_images:
+                        src = img.get('src', '')
+                        if src and not src.startswith('data:'):  # 排除 base64 編碼的圖片
+                            nitter_images.append(img)
+                    logger.info(f"Added {len(nitter_images)} additional images")
+                
+                if nitter_images:
+                    logger.info(f"Found {len(nitter_images)} images on Nitter")
+                    for img in nitter_images:
+                        img_url = img.get('src', '')
+                        if not img_url:
+                            continue
+                            
+                        # 處理相對路徑
+                        if img_url.startswith('//'):
+                            img_url = 'https:' + img_url
+                        elif img_url.startswith('/'):
+                            img_url = 'https://nitter.net' + img_url
                         
-                    # 處理相對路徑
-                    if img_url.startswith('//'):
-                        img_url = 'https:' + img_url
-                    elif img_url.startswith('/'):
-                        img_url = 'https://nitter.net' + img_url
+                        # 確保使用原始大小的圖片
+                        if 'pbs.twimg.com/media/' in img_url:
+                            img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                        
+                        logger.info(f"Sending image from Nitter: {img_url}")
+                        await update.message.reply_photo(img_url)
+                        media_found = True
                     
-                    # 確保使用原始大小的圖片
-                    if 'pbs.twimg.com/media/' in img_url:
-                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                    # 如果成功提取了媒體，跳出循環
+                    if media_found:
+                        logger.info(f"Successfully extracted media from Nitter URL: {nitter_url}")
+                        break
+                else:
+                    logger.info(f"No images found on Nitter URL: {nitter_url}")
                     
-                    logger.info(f"Sending image from Nitter: {img_url}")
-                    await update.message.reply_photo(img_url)
-                    media_found = True
-                
-                # 如果成功提取了媒體，跳出循環
-                if media_found:
-                    logger.info(f"Successfully extracted media from Nitter URL: {nitter_url}")
-                    break
-            else:
-                logger.info(f"No images found on Nitter URL: {nitter_url}")
-                
-        except Exception as e:
-            logger.error(f"Error with Nitter URL {nitter_url}: {str(e)}")
-            continue
+            except Exception as e:
+                logger.error(f"Error with Nitter URL {nitter_url}: {str(e)}")
+                continue
     
     return media_found
 
