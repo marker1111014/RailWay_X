@@ -135,22 +135,50 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "This media contains sensitive content",
                         "Age-restricted content",
                         "Content warning",
-                        "Sensitive content"
+                        "Sensitive content",
+                        "View",  # Twitter常用於限制級內容的按鈕文字
+                        "Show",  # Twitter常用於限制級內容的按鈕文字
+                        "Yes, view profile",  # 限制級帳號的確認按鈕
+                        "Some media in this Tweet may contain sensitive content"  # 新的限制級提示
                     ]
                     
+                    # 檢查頁面內容中是否包含限制級提示
+                    page_text = await page.evaluate('() => document.body.innerText')
                     for text in age_restriction_texts:
-                        if text in page_content:
+                        if text.lower() in page_text.lower():
                             age_restricted = True
                             logger.info(f"Age restriction detected: {text}")
                             break
                     
-                    # 檢查是否有"查看"按鈕（通常用於解鎖限制級內容）
-                    view_button = await page.query_selector('div[role="button"]:has-text("View")')
-                    if view_button:
-                        age_restricted = True
-                        logger.info("Age restriction detected: View button found")
+                    if not age_restricted:
+                        # 檢查是否有限制級內容的按鈕
+                        buttons = await page.query_selector_all('div[role="button"]')
+                        for button in buttons:
+                            button_text = await button.text_content()
+                            if button_text and any(text.lower() in button_text.lower() for text in ["View", "Show"]):
+                                age_restricted = True
+                                logger.info(f"Age restriction detected: Button with text '{button_text}' found")
+                                break
+                        
+                        # 檢查是否有限制級內容的遮罩層
+                        overlay = await page.query_selector('div[aria-label*="sensitive"], div[aria-label*="warning"]')
+                        if overlay:
+                            age_restricted = True
+                            logger.info("Age restriction detected: Content overlay found")
+                            
+                        # 檢查是否有特定的限制級內容標記
+                        markers = await page.query_selector_all('[data-testid*="warning"], [data-testid*="sensitive"]')
+                        if markers:
+                            age_restricted = True
+                            logger.info("Age restriction detected: Content markers found")
+                            
                 except Exception as e:
                     logger.error(f"Error checking age restriction: {str(e)}")
+                    
+                if age_restricted:
+                    logger.info("Tweet contains age-restricted content")
+                    await update.message.reply_text('這則貼文包含限制級內容（18+），需要登入才能查看完整內容。')
+                    return
                 
                 # 等待更長時間以確保動態內容加載
                 logger.info("Waiting for dynamic content...")
