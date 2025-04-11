@@ -112,6 +112,26 @@ def extract_tweet_info(url):
     username, tweet_id = match.groups()
     return username, tweet_id
 
+def convert_nitter_url_to_twitter(img_url):
+    """將 Nitter 圖片 URL 轉換為 Twitter 原始圖片 URL"""
+    try:
+        # 從 URL 中提取媒體 ID
+        media_id = None
+        if '/media/' in img_url:
+            media_id = img_url.split('/media/')[1].split('?')[0].split('.')[0]
+        elif '/profile_images/' in img_url:
+            # 處理頭像圖片
+            return img_url.replace('nitter.net', 'pbs.twimg.com')
+        
+        if media_id:
+            # 構建 Twitter 原始圖片 URL
+            return f"https://pbs.twimg.com/media/{media_id}?format=jpg&name=orig"
+        
+        return img_url
+    except Exception as e:
+        logging.error(f"轉換 URL 時發生錯誤: {str(e)}")
+        return img_url
+
 async def extract_images_from_nitter(tweet_url, update):
     """使用 Nitter 提取圖片，使用更真實的瀏覽器行為"""
     user_id = update.effective_user.id
@@ -275,18 +295,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 else:
                                     img_url = href
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 still-image 找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 still-image 找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 still-image 找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 2. 嘗試 attachment image
                 for container in image_containers:
@@ -301,18 +314,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 elif img_url.startswith('/'):
                                     img_url = f"https://nitter.net{img_url}"
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 attachment image 找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 attachment image 找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 attachment image 找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 3. 嘗試 tweet-img
                 for container in image_containers:
@@ -327,18 +333,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 elif img_url.startswith('/'):
                                     img_url = f"https://nitter.net{img_url}"
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 tweet-img 找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 tweet-img 找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 tweet-img 找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 4. 嘗試 media-image
                 for container in image_containers:
@@ -353,18 +352,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 elif img_url.startswith('/'):
                                     img_url = f"https://nitter.net{img_url}"
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 media-image 找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 media-image 找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 media-image 找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 5. 嘗試 alt="Image"
                 for container in image_containers:
@@ -379,18 +371,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 elif img_url.startswith('/'):
                                     img_url = f"https://nitter.net{img_url}"
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 alt='Image' 找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 alt='Image' 找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 alt='Image' 找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 6. 嘗試所有 img 標籤
                 for container in image_containers:
@@ -405,18 +390,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 elif img_url.startswith('/'):
                                     img_url = f"https://nitter.net{img_url}"
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 img 標籤找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 img 標籤找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 img 標籤找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 7. 嘗試 a 標籤中的圖片
                 for container in image_containers:
@@ -434,18 +412,11 @@ async def extract_images_from_nitter(tweet_url, update):
                                 else:
                                     img_url = href
                                 
-                                # 轉換為原圖 URL
-                                if "/pic/" in img_url:
-                                    original_url = img_url.replace("/pic/", "/img/")
-                                    if "?" in original_url:
-                                        original_url = original_url.split("?")[0]
-                                    if "/orig/" not in original_url and "/media/" in original_url:
-                                        original_url = original_url.replace("/media/", "/orig/media/")
-                                    images.append(original_url)
-                                    logging.info(f"從 a 標籤找到圖片URL: {img_url} -> {original_url}")
-                                else:
-                                    images.append(img_url)
-                                    logging.info(f"從 a 標籤找到圖片URL: {img_url}")
+                                # 轉換為 Twitter 原始圖片 URL
+                                twitter_url = convert_nitter_url_to_twitter(img_url)
+                                if twitter_url not in images:
+                                    images.append(twitter_url)
+                                    logging.info(f"從 a 標籤找到圖片URL: {img_url} -> {twitter_url}")
                 
                 # 如果沒有找到圖片，嘗試直接從頁面中提取所有圖片 URL
                 if not images:
@@ -462,18 +433,11 @@ async def extract_images_from_nitter(tweet_url, update):
                             else:
                                 img_url = href
                             
-                            # 轉換為原圖 URL
-                            if "/pic/" in img_url:
-                                original_url = img_url.replace("/pic/", "/img/")
-                                if "?" in original_url:
-                                    original_url = original_url.split("?")[0]
-                                if "/orig/" not in original_url and "/media/" in original_url:
-                                    original_url = original_url.replace("/media/", "/orig/media/")
-                                images.append(original_url)
-                                logging.info(f"直接找到圖片URL: {img_url} -> {original_url}")
-                            else:
-                                images.append(img_url)
-                                logging.info(f"直接找到圖片URL: {img_url}")
+                            # 轉換為 Twitter 原始圖片 URL
+                            twitter_url = convert_nitter_url_to_twitter(img_url)
+                            if twitter_url not in images:
+                                images.append(twitter_url)
+                                logging.info(f"直接找到圖片URL: {img_url} -> {twitter_url}")
                 
                 if images:
                     logging.info(f"成功找到 {len(images)} 張圖片")
