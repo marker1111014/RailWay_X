@@ -138,10 +138,26 @@ async def extract_images_from_nitter(tweet_url, update):
                 # 使用隨機瀏覽器類型
                 browser_type = random.choice(["chrome", "firefox"])
                 headers = get_random_headers(browser_type)
-                headers["Referer"] = "https://www.google.com/"  # 模擬從 Google 搜索進入
+                
+                # 添加更多真實的請求頭
+                headers.update({
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Cache-Control": "max-age=0",
+                    "Connection": "keep-alive",
+                    "DNT": "1",
+                    "Pragma": "no-cache",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1",
+                    "Referer": "https://www.google.com/",
+                })
                 
                 # 添加隨機延遲
-                delay = random.uniform(2, 5)
+                delay = random.uniform(3, 7)
                 logging.info(f"等待 {delay:.2f} 秒...")
                 time.sleep(delay)
                 
@@ -149,7 +165,8 @@ async def extract_images_from_nitter(tweet_url, update):
                 profile_response = session.get(
                     user_profile_url,
                     headers=headers,
-                    timeout=20
+                    timeout=20,
+                    allow_redirects=True
                 )
                 
                 if profile_response.status_code != 200:
@@ -169,7 +186,7 @@ async def extract_images_from_nitter(tweet_url, update):
                 headers["Referer"] = user_profile_url
                 
                 # 添加隨機延遲
-                delay = random.uniform(1, 3)
+                delay = random.uniform(2, 5)
                 logging.info(f"等待 {delay:.2f} 秒...")
                 time.sleep(delay)
                 
@@ -177,7 +194,8 @@ async def extract_images_from_nitter(tweet_url, update):
                 response = session.get(
                     nitter_url,
                     headers=headers,
-                    timeout=20
+                    timeout=20,
+                    allow_redirects=True
                 )
                 
                 if response.status_code == 429:
