@@ -1,9 +1,11 @@
 import os
 import re
 import logging
+import time
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import tweepy
+from tweepy.errors import TooManyRequests
 from dotenv import load_dotenv
 
 # 載入環境變數
@@ -21,6 +23,10 @@ TWITTER_BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN')
 
 # 初始化 Twitter API 客戶端
 client = tweepy.Client(bearer_token=TWITTER_BEARER_TOKEN)
+
+# 重試設置
+MAX_RETRIES = 3
+RETRY_DELAY = 60  # 秒
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
@@ -42,9 +48,25 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 獲取貼文內容
-        tweet = client.get_tweet(tweet_id, expansions=['attachments.media_keys'],
-                               media_fields=['url', 'preview_image_url'])
+        # 添加重試機制
+        for attempt in range(MAX_RETRIES):
+            try:
+                # 獲取貼文內容
+                tweet = client.get_tweet(tweet_id, expansions=['attachments.media_keys'],
+                                       media_fields=['url', 'preview_image_url'])
+                break
+            except TooManyRequests:
+                if attempt < MAX_RETRIES - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    await update.message.reply_text(
+                        f'Twitter API 請求限制，等待 {wait_time} 秒後重試...'
+                    )
+                    time.sleep(wait_time)
+                else:
+                    await update.message.reply_text(
+                        '抱歉，Twitter API 請求限制，請稍後再試。'
+                    )
+                    return
         
         if not hasattr(tweet, 'includes') or 'media' not in tweet.includes:
             await update.message.reply_text('這則貼文中沒有圖片！')
@@ -62,7 +84,12 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
-        await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
+        if isinstance(e, TooManyRequests):
+            await update.message.reply_text(
+                '抱歉，Twitter API 請求限制，請稍後再試。'
+            )
+        else:
+            await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
 
 def main():
     """主程序"""
