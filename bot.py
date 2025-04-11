@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError
 import asyncio
 
 # 載入環境變數
@@ -87,11 +87,32 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 logger.info(f"Navigating to tweet URL: https://twitter.com/i/status/{tweet_id}")
                 # 訪問貼文頁面
-                await page.goto(f"https://twitter.com/i/status/{tweet_id}")
+                try:
+                    await page.goto(f"https://twitter.com/i/status/{tweet_id}", timeout=30000)
+                except TimeoutError:
+                    logger.error("Page load timeout")
+                    await update.message.reply_text('頁面加載超時，請稍後再試。')
+                    return
                 
                 # 等待頁面加載
                 logger.info("Waiting for page to load...")
-                await page.wait_for_load_state('networkidle')
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=30000)
+                except TimeoutError:
+                    logger.warning("Network idle timeout, continuing anyway")
+                
+                # 檢查是否需要登錄
+                if await page.query_selector('text="Log in to X"'):
+                    logger.error("Login required")
+                    await update.message.reply_text('這則貼文需要登錄才能查看，請確保貼文是公開的。')
+                    return
+                
+                # 檢查推文是否存在
+                if await page.query_selector('text="This Tweet is unavailable"'):
+                    logger.error("Tweet unavailable")
+                    await update.message.reply_text('這則貼文無法訪問，可能已被刪除或設為私密。')
+                    return
+                
                 await asyncio.sleep(5)  # 額外等待動態內容加載
                 
                 # 獲取頁面源碼
