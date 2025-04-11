@@ -8,13 +8,10 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
 # 載入環境變數
 load_dotenv()
@@ -50,83 +47,44 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 設置 Chrome 選項
-        chrome_options = Options()
-        chrome_options.add_argument('--headless=new')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--disable-popup-blocking')
-        chrome_options.add_argument('--disable-web-security')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-        chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--start-maximized')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-        chrome_options.add_argument('--disable-site-isolation-trials')
-        chrome_options.add_argument('--disable-web-security')
-        chrome_options.add_argument('--allow-running-insecure-content')
-        chrome_options.add_argument('--disable-setuid-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-accelerated-2d-canvas')
-        chrome_options.add_argument('--no-first-run')
-        chrome_options.add_argument('--no-zygote')
-        chrome_options.add_argument('--single-process')
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-
-        # 設置 Chrome 二進制文件路徑
-        chrome_options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/google-chrome')
-        
         # 初始化 WebDriver
         try:
-            # 使用 webdriver_manager 獲取 ChromeDriver 路徑
-            driver_path = ChromeDriverManager().install()
+            # 使用 undetected-chromedriver
+            options = uc.ChromeOptions()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--disable-extensions')
+            options.add_argument('--disable-infobars')
+            options.add_argument('--disable-notifications')
+            options.add_argument('--disable-popup-blocking')
+            options.add_argument('--disable-web-security')
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+            options.add_argument('--window-size=1920,1080')
+            options.add_argument('--start-maximized')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+            options.add_argument('--disable-site-isolation-trials')
+            options.add_argument('--disable-web-security')
+            options.add_argument('--allow-running-insecure-content')
+            options.add_argument('--disable-setuid-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-accelerated-2d-canvas')
+            options.add_argument('--no-first-run')
+            options.add_argument('--no-zygote')
+            options.add_argument('--single-process')
             
-            # 找到實際的 chromedriver 可執行文件
-            chromedriver_dir = os.path.dirname(driver_path)
-            chromedriver_executable = None
-            
-            # 檢查目錄中的所有文件
-            for file in os.listdir(chromedriver_dir):
-                if file.startswith('chromedriver'):
-                    chromedriver_executable = os.path.join(chromedriver_dir, file)
-                    break
-            
-            if not chromedriver_executable:
-                # 如果找不到，嘗試在子目錄中查找
-                for root, dirs, files in os.walk(chromedriver_dir):
-                    for file in files:
-                        if file.startswith('chromedriver'):
-                            chromedriver_executable = os.path.join(root, file)
-                            break
-                    if chromedriver_executable:
-                        break
-            
-            if not chromedriver_executable:
-                raise Exception("找不到 chromedriver 可執行文件")
-            
-            # 設置執行權限
-            os.chmod(chromedriver_executable, 0o755)
-            
-            # 創建 Service 對象
-            service = Service(executable_path=chromedriver_executable)
+            # 設置 Chrome 二進制文件路徑
+            options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/google-chrome')
             
             # 初始化 WebDriver
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver = uc.Chrome(options=options)
             
         except Exception as e:
             logging.error(f"ChromeDriver 初始化錯誤: {str(e)}")
-            # 嘗試使用系統安裝的 ChromeDriver
-            try:
-                driver = webdriver.Chrome(options=chrome_options)
-            except Exception as e2:
-                logging.error(f"系統 ChromeDriver 初始化錯誤: {str(e2)}")
-                await update.message.reply_text('初始化瀏覽器時發生錯誤，請稍後再試。')
-                return
+            await update.message.reply_text('初始化瀏覽器時發生錯誤，請稍後再試。')
+            return
         
         try:
             # 訪問貼文頁面
