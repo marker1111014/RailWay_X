@@ -101,24 +101,33 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except TimeoutError:
                     logger.warning("Network idle timeout, continuing anyway")
                 
+                # 檢查頁面內容
+                page_content = await page.content()
+                logger.info("Checking page content...")
+                
                 # 檢查是否需要登錄
-                if await page.query_selector('text="Log in to X"'):
+                if "Log in to X" in page_content or "Sign in to X" in page_content:
                     logger.error("Login required")
                     await update.message.reply_text('這則貼文需要登錄才能查看，請確保貼文是公開的。')
                     return
                 
                 # 檢查推文是否存在
-                if await page.query_selector('text="This Tweet is unavailable"'):
+                if "This Tweet is unavailable" in page_content or "Tweet unavailable" in page_content:
                     logger.error("Tweet unavailable")
                     await update.message.reply_text('這則貼文無法訪問，可能已被刪除或設為私密。')
+                    return
+                
+                # 檢查是否有錯誤訊息
+                if "Something went wrong" in page_content:
+                    logger.error("Twitter error")
+                    await update.message.reply_text('Twitter 出現錯誤，請稍後再試。')
                     return
                 
                 await asyncio.sleep(5)  # 額外等待動態內容加載
                 
                 # 獲取頁面源碼
                 logger.info("Getting page content...")
-                page_source = await page.content()
-                soup = BeautifulSoup(page_source, 'html.parser')
+                soup = BeautifulSoup(page_content, 'html.parser')
                 
                 # 查找所有圖片
                 logger.info("Searching for images...")
