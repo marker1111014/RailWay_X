@@ -73,29 +73,31 @@ def get_random_headers(browser_type="chrome"):
     ua = UserAgent()
     headers = {
         "User-Agent": ua.random,
-        "Accept": BROWSER_FINGERPRINTS[browser_type]["accept"],
-        "Accept-Language": BROWSER_FINGERPRINTS[browser_type]["accept_language"],
-        "DNT": "1",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
         "Connection": "keep-alive",
+        "DNT": "1",
+        "Pragma": "no-cache",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "max-age=0"
+        "Referer": "https://www.google.com/",
     }
     
     # 添加瀏覽器特定的頭部
     if browser_type == "chrome":
         headers.update({
-            "Sec-Ch-Ua": BROWSER_FINGERPRINTS[browser_type]["sec_ch_ua"],
-            "Sec-Ch-Ua-Mobile": BROWSER_FINGERPRINTS[browser_type]["sec_ch_ua_mobile"],
-            "Sec-Ch-Ua-Platform": BROWSER_FINGERPRINTS[browser_type]["sec_ch_ua_platform"],
-            "Sec-Fetch-Dest": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_dest"],
-            "Sec-Fetch-Mode": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_mode"],
-            "Sec-Fetch-Site": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_site"],
-            "Sec-Fetch-User": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_user"]
+            "Sec-Ch-Ua": '"Google Chrome";v="120", "Chromium";v="120", "Not-A.Brand";v="99"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
         })
     elif browser_type == "firefox":
         headers.update({
-            "Accept-Encoding": BROWSER_FINGERPRINTS[browser_type]["accept_encoding"],
-            "TE": BROWSER_FINGERPRINTS[browser_type]["te"]
+            "TE": "Trailers",
         })
     
     return headers
@@ -158,23 +160,6 @@ async def extract_images_from_nitter(tweet_url, update):
                 # 使用隨機瀏覽器類型
                 browser_type = random.choice(["chrome", "firefox"])
                 headers = get_random_headers(browser_type)
-                
-                # 添加更多真實的請求頭
-                headers.update({
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Cache-Control": "max-age=0",
-                    "Connection": "keep-alive",
-                    "DNT": "1",
-                    "Pragma": "no-cache",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1",
-                    "Referer": "https://www.google.com/",
-                })
                 
                 # 添加隨機延遲
                 delay = random.uniform(3, 7)
