@@ -156,10 +156,16 @@ async def extract_images_from_nitter(tweet_url, update):
     username = update.effective_user.username
     logging.info(f"用戶 {username} (ID: {user_id}) 開始使用 Nitter 方法提取圖片: {tweet_url}")
     
+    # 初始化 nitter_url 變量
+    nitter_url = None
+    
     try:
         # 提取用戶名和推文 ID
         username, tweet_id = extract_tweet_info(tweet_url)
         logging.info(f"從 URL 提取到用戶名: {username}, 推文 ID: {tweet_id}")
+        
+        # 構建 Nitter URL
+        nitter_url = f"https://nitter.net/{username}/status/{tweet_id}"
         
         # 創建會話對象，保持 cookie
         session = requests.Session()
@@ -211,8 +217,6 @@ async def extract_images_from_nitter(tweet_url, update):
                         continue
                     return False
                 
-                # 構建 Nitter URL
-                nitter_url = f"https://nitter.net/{username}/status/{tweet_id}"
                 logging.info(f"請求 URL: {nitter_url}")
                 
                 # 更新請求頭，添加 Referer
