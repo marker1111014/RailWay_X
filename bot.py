@@ -123,37 +123,16 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text('Twitter 出現錯誤，請稍後再試。')
                     return
                 
-                await asyncio.sleep(5)  # 額外等待動態內容加載
+                # 等待更長時間以確保動態內容加載
+                logger.info("Waiting for dynamic content...")
+                await asyncio.sleep(10)
                 
-                # 獲取頁面源碼
-                logger.info("Getting page content...")
-                soup = BeautifulSoup(page_content, 'html.parser')
+                # 嘗試使用多種方法提取媒體
+                media_found = False
                 
-                # 查找所有圖片
-                logger.info("Searching for images...")
-                images = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/media/')})
-                if images:
-                    logger.info(f"Found {len(images)} images")
-                    for img in images:
-                        img_url = img['src']
-                        # 移除圖片大小限制
-                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
-                        logger.info(f"Sending image: {img_url}")
-                        await update.message.reply_photo(img_url)
-                    return
-                
-                # 如果沒有找到圖片，檢查是否有影片預覽圖
-                logger.info("Searching for video previews...")
-                video_previews = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/tweet_video_thumb/')})
-                if video_previews:
-                    logger.info(f"Found {len(video_previews)} video previews")
-                    for preview in video_previews:
-                        await update.message.reply_photo(preview['src'])
-                    return
-                
-                # 如果還是沒有找到，嘗試使用 JavaScript 獲取
+                # 方法 1: 使用 JavaScript 提取
                 try:
-                    logger.info("Trying JavaScript extraction...")
+                    logger.info("Trying JavaScript extraction method 1...")
                     # 等待媒體元素加載
                     media_elements = await page.query_selector_all('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')
                     logger.info(f"Found {len(media_elements)} media elements")
@@ -166,21 +145,83 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 img_url = await img_element.get_attribute('src')
                                 if img_url:
                                     img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
-                                    logger.info(f"Sending image from JavaScript: {img_url}")
+                                    logger.info(f"Sending image from JavaScript method 1: {img_url}")
                                     await update.message.reply_photo(img_url)
+                                    media_found = True
                         elif data_testid == 'videoPlayer':
                             img_element = await element.query_selector('img')
                             if img_element:
                                 preview_url = await img_element.get_attribute('src')
                                 if preview_url:
-                                    logger.info(f"Sending video preview from JavaScript: {preview_url}")
+                                    logger.info(f"Sending video preview from JavaScript method 1: {preview_url}")
                                     await update.message.reply_photo(preview_url)
-                    return
+                                    media_found = True
                 except Exception as e:
-                    logger.error(f"Error with JavaScript extraction: {str(e)}")
+                    logger.error(f"Error with JavaScript extraction method 1: {str(e)}")
                 
-                logger.info("No media found in tweet")
-                await update.message.reply_text('這則貼文中沒有圖片或影片！')
+                # 方法 2: 使用 BeautifulSoup 解析
+                if not media_found:
+                    try:
+                        logger.info("Trying BeautifulSoup extraction...")
+                        # 獲取頁面源碼
+                        page_source = await page.content()
+                        soup = BeautifulSoup(page_source, 'html.parser')
+                        
+                        # 查找所有圖片
+                        images = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/media/')})
+                        if images:
+                            logger.info(f"Found {len(images)} images with BeautifulSoup")
+                            for img in images:
+                                img_url = img['src']
+                                # 移除圖片大小限制
+                                img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                logger.info(f"Sending image from BeautifulSoup: {img_url}")
+                                await update.message.reply_photo(img_url)
+                                media_found = True
+                        
+                        # 如果沒有找到圖片，檢查是否有影片預覽圖
+                        if not media_found:
+                            video_previews = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/tweet_video_thumb/')})
+                            if video_previews:
+                                logger.info(f"Found {len(video_previews)} video previews with BeautifulSoup")
+                                for preview in video_previews:
+                                    await update.message.reply_photo(preview['src'])
+                                    media_found = True
+                    except Exception as e:
+                        logger.error(f"Error with BeautifulSoup extraction: {str(e)}")
+                
+                # 方法 3: 使用 JavaScript 執行腳本
+                if not media_found:
+                    try:
+                        logger.info("Trying JavaScript execution method...")
+                        # 執行 JavaScript 來提取媒體 URL
+                        media_urls = await page.evaluate('''() => {
+                            const mediaUrls = [];
+                            // 查找所有圖片
+                            document.querySelectorAll('img').forEach(img => {
+                                const src = img.src;
+                                if (src && (src.includes('pbs.twimg.com/media/') || src.includes('pbs.twimg.com/tweet_video_thumb/'))) {
+                                    mediaUrls.push(src);
+                                }
+                            });
+                            return mediaUrls;
+                        }''')
+                        
+                        if media_urls and len(media_urls) > 0:
+                            logger.info(f"Found {len(media_urls)} media URLs with JavaScript execution")
+                            for url in media_urls:
+                                # 移除圖片大小限制
+                                url = re.sub(r'&name=\w+', '&name=orig', url)
+                                logger.info(f"Sending media from JavaScript execution: {url}")
+                                await update.message.reply_photo(url)
+                                media_found = True
+                    except Exception as e:
+                        logger.error(f"Error with JavaScript execution: {str(e)}")
+                
+                # 如果還是沒有找到媒體
+                if not media_found:
+                    logger.info("No media found in tweet")
+                    await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     
             except Exception as e:
                 logger.error(f"Error fetching tweet: {str(e)}")
