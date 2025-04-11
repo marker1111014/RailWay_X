@@ -444,6 +444,254 @@ async def extract_images_with_graphql_api(tweet_id, update):
     
     return media_found
 
+async def get_guest_token():
+    """獲取 Twitter Guest Token"""
+    try:
+        logger.info("Getting Twitter Guest Token...")
+        
+        # 設置請求頭
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Origin': 'https://twitter.com',
+            'Referer': 'https://twitter.com/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'TE': 'trailers'
+        }
+        
+        # 發送請求
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                'https://api.twitter.com/1.1/guest/activate.json',
+                headers=headers,
+                timeout=10
+            )
+            
+            # 檢查響應狀態
+            if response.status_code != 200:
+                logger.warning(f"Failed to get Guest Token, status code: {response.status_code}")
+                return None
+            
+            # 解析 JSON 響應
+            try:
+                data = response.json()
+                guest_token = data.get('guest_token')
+                if guest_token:
+                    logger.info(f"Successfully got Guest Token: {guest_token[:10]}...")
+                    return guest_token
+                else:
+                    logger.warning("No Guest Token in response")
+                    return None
+            
+            except json.JSONDecodeError:
+                logger.error("Failed to parse JSON response from Guest Token API")
+                return None
+    
+    except Exception as e:
+        logger.error(f"Error getting Guest Token: {str(e)}")
+        return None
+
+async def extract_images_with_guest_token(tweet_id, update):
+    """使用 Twitter Guest Token 提取圖片"""
+    media_found = False
+    
+    try:
+        # 獲取 Guest Token
+        guest_token = await get_guest_token()
+        if not guest_token:
+            logger.warning("Failed to get Guest Token, skipping Guest Token extraction")
+            return False
+        
+        # 設置請求頭
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Referer': f'https://twitter.com/i/status/{tweet_id}',
+            'Origin': 'https://twitter.com',
+            'x-guest-token': guest_token,
+            'x-twitter-client-language': 'en',
+            'x-twitter-active-user': 'yes',
+            'x-twitter-client-version': 'web',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'te': 'trailers'
+        }
+        
+        # 嘗試使用 Guest Token 訪問 Twitter API
+        api_url = f"https://api.twitter.com/1.1/statuses/show/{tweet_id}.json?tweet_mode=extended"
+        logger.info(f"Trying Twitter API with Guest Token: {api_url}")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(api_url, headers=headers, timeout=10)
+            
+            # 檢查響應狀態
+            if response.status_code != 200:
+                logger.warning(f"Failed to access Twitter API with Guest Token, status code: {response.status_code}")
+                return False
+            
+            # 解析 JSON 響應
+            try:
+                data = response.json()
+                logger.info(f"Twitter API response with Guest Token: {json.dumps(data)[:200]}...")
+                
+                # 檢查是否有媒體
+                if 'extended_entities' in data and 'media' in data['extended_entities']:
+                    logger.info("Found 'extended_entities.media' in API response with Guest Token")
+                    for media in data['extended_entities']['media']:
+                        if media.get('type') == 'photo':
+                            img_url = media.get('media_url_https')
+                            if img_url:
+                                # 移除圖片大小限制
+                                img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                logger.info(f"Sending image from Twitter API with Guest Token: {img_url}")
+                                await update.message.reply_photo(img_url)
+                                media_found = True
+                        elif media.get('type') == 'video':
+                            video_info = media.get('video_info', {})
+                            variants = video_info.get('variants', [])
+                            for variant in variants:
+                                if variant.get('content_type') == 'image/jpeg':
+                                    preview_url = variant.get('url')
+                                    if preview_url:
+                                        logger.info(f"Sending video preview from Twitter API with Guest Token: {preview_url}")
+                                        await update.message.reply_photo(preview_url)
+                                        media_found = True
+                
+                # 如果沒有找到媒體，嘗試使用 Guest Token 訪問 GraphQL API
+                if not media_found:
+                    logger.info("No media found with Guest Token, trying GraphQL API...")
+                    
+                    # 設置 GraphQL 請求頭
+                    graphql_headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Connection': 'keep-alive',
+                        'Referer': f'https://twitter.com/i/status/{tweet_id}',
+                        'Origin': 'https://twitter.com',
+                        'x-guest-token': guest_token,
+                        'x-twitter-client-language': 'en',
+                        'x-twitter-active-user': 'yes',
+                        'x-twitter-client-version': 'web',
+                        'sec-fetch-dest': 'empty',
+                        'sec-fetch-mode': 'cors',
+                        'sec-fetch-site': 'same-origin',
+                        'te': 'trailers'
+                    }
+                    
+                    # 遍歷所有 Twitter GraphQL API 端點
+                    for api_endpoint in TWITTER_GRAPHQL_ENDPOINTS:
+                        if media_found:
+                            break
+                            
+                        try:
+                            api_url = api_endpoint.format(tweet_id=tweet_id)
+                            logger.info(f"Trying Twitter GraphQL API with Guest Token: {api_url}")
+                            
+                            # 發送請求
+                            response = await client.get(api_url, headers=graphql_headers, timeout=10)
+                            
+                            # 檢查響應狀態
+                            if response.status_code != 200:
+                                logger.warning(f"Failed to access Twitter GraphQL API with Guest Token, status code: {response.status_code}")
+                                continue
+                            
+                            # 解析 JSON 響應
+                            try:
+                                data = response.json()
+                                logger.info(f"Twitter GraphQL API response with Guest Token: {json.dumps(data)[:200]}...")
+                                
+                                # 方法 1: TweetDetail API
+                                if 'data' in data and 'threaded_conversation_with_injections_v2' in data['data']:
+                                    logger.info("Found 'threaded_conversation_with_injections_v2' in GraphQL response with Guest Token")
+                                    instructions = data['data']['threaded_conversation_with_injections_v2']['instructions']
+                                    
+                                    for instruction in instructions:
+                                        if 'entries' in instruction:
+                                            for entry in instruction['entries']:
+                                                if 'content' in entry and 'itemContent' in entry['content']:
+                                                    tweet_results = entry['content']['itemContent']['tweet_results']
+                                                    if 'result' in tweet_results:
+                                                        result = tweet_results['result']
+                                                        
+                                                        # 檢查是否有媒體
+                                                        if 'legacy' in result and 'extended_entities' in result['legacy']:
+                                                            media = result['legacy']['extended_entities']['media']
+                                                            for item in media:
+                                                                if item['type'] == 'photo':
+                                                                    img_url = item['media_url_https']
+                                                                    # 移除圖片大小限制
+                                                                    img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                                                    logger.info(f"Sending image from GraphQL API with Guest Token: {img_url}")
+                                                                    await update.message.reply_photo(img_url)
+                                                                    media_found = True
+                                                                elif item['type'] == 'video':
+                                                                    video_info = item['video_info']
+                                                                    variants = video_info['variants']
+                                                                    for variant in variants:
+                                                                        if variant['content_type'] == 'image/jpeg':
+                                                                            preview_url = variant['url']
+                                                                            logger.info(f"Sending video preview from GraphQL API with Guest Token: {preview_url}")
+                                                                            await update.message.reply_photo(preview_url)
+                                                                            media_found = True
+                                
+                                # 方法 2: TweetResultByRestId API
+                                elif 'data' in data and 'tweet_result' in data['data']:
+                                    logger.info("Found 'tweet_result' in GraphQL response with Guest Token")
+                                    result = data['data']['tweet_result']
+                                    
+                                    if 'legacy' in result and 'extended_entities' in result['legacy']:
+                                        media = result['legacy']['extended_entities']['media']
+                                        for item in media:
+                                            if item['type'] == 'photo':
+                                                img_url = item['media_url_https']
+                                                # 移除圖片大小限制
+                                                img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                                logger.info(f"Sending image from GraphQL API with Guest Token: {img_url}")
+                                                await update.message.reply_photo(img_url)
+                                                media_found = True
+                                            elif item['type'] == 'video':
+                                                video_info = item['video_info']
+                                                variants = video_info['variants']
+                                                for variant in variants:
+                                                    if variant['content_type'] == 'image/jpeg':
+                                                        preview_url = variant['url']
+                                                        logger.info(f"Sending video preview from GraphQL API with Guest Token: {preview_url}")
+                                                        await update.message.reply_photo(preview_url)
+                                                        media_found = True
+                                
+                                # 如果成功提取了媒體，跳出循環
+                                if media_found:
+                                    logger.info(f"Successfully extracted media from Twitter GraphQL API with Guest Token: {api_url}")
+                                    break
+                                else:
+                                    logger.info(f"No media found in Twitter GraphQL API response with Guest Token: {api_url}")
+                            
+                            except json.JSONDecodeError:
+                                logger.error(f"Failed to parse JSON response from Twitter GraphQL API with Guest Token: {api_url}")
+                                continue
+                            
+                        except Exception as e:
+                            logger.error(f"Error with Twitter GraphQL API with Guest Token: {api_url}: {str(e)}")
+                            continue
+            
+            except json.JSONDecodeError:
+                logger.error("Failed to parse JSON response from Twitter API with Guest Token")
+                return False
+    
+    except Exception as e:
+        logger.error(f"Error with Twitter Guest Token extraction: {str(e)}")
+        return False
+    
+    return media_found
+
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
     try:
@@ -462,26 +710,31 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         media_found = False
         
-        # 方法 1: 使用 Twitter GraphQL API 提取媒體
-        logger.info("Trying to extract media using Twitter GraphQL API...")
-        media_found = await extract_images_with_graphql_api(tweet_id, update)
+        # 方法 1: 使用 Twitter Guest Token 提取媒體
+        logger.info("Trying to extract media using Twitter Guest Token...")
+        media_found = await extract_images_with_guest_token(tweet_id, update)
         
-        # 方法 2: 使用 Twitter API 提取媒體
+        # 方法 2: 使用 Twitter GraphQL API 提取媒體
+        if not media_found:
+            logger.info("Twitter Guest Token extraction failed, trying Twitter GraphQL API...")
+            media_found = await extract_images_with_graphql_api(tweet_id, update)
+        
+        # 方法 3: 使用 Twitter API 提取媒體
         if not media_found:
             logger.info("Twitter GraphQL API extraction failed, trying Twitter API...")
             media_found = await extract_images_with_twitter_api(tweet_id, update)
         
-        # 方法 3: 使用 Twitter 嵌入 API 提取媒體
+        # 方法 4: 使用 Twitter 嵌入 API 提取媒體
         if not media_found:
             logger.info("Twitter API extraction failed, trying Twitter embed API...")
             media_found = await extract_images_with_embed_api(tweet_id, update)
         
-        # 方法 4: 使用 requests 從 Nitter 提取媒體
+        # 方法 5: 使用 requests 從 Nitter 提取媒體
         if not media_found:
             logger.info("Twitter embed API extraction failed, trying Nitter with requests...")
             media_found = await extract_images_with_requests(tweet_id, update)
         
-        # 方法 5: 使用 Playwright 從 Twitter 直接提取
+        # 方法 6: 使用 Playwright 從 Twitter 直接提取
         if not media_found:
             logger.info("Nitter extraction failed, trying Twitter directly with Playwright...")
             
