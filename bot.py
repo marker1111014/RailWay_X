@@ -788,8 +788,8 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # 檢查是否有錯誤訊息
                     if "Something went wrong" in page_content:
                         logger.error("Twitter error")
-                        await update.message.reply_text('Twitter 發生錯誤，請稍後再試。')
-                        return
+                        # 不要立即返回，繼續嘗試提取媒體
+                        logger.info("Continuing despite Twitter error message")
                     
                     # 等待更長時間以確保動態內容加載
                     logger.info("Waiting for dynamic content...")
