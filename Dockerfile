@@ -18,10 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd -m appuser
 
 # 安裝 Playwright 瀏覽器
-RUN mkdir -p /home/appuser/.cache && \
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN mkdir -p /ms-playwright && \
     playwright install chromium && \
     playwright install-deps && \
-    chown -R appuser:appuser /home/appuser/.cache
+    chown -R appuser:appuser /ms-playwright
 
 # 複製應用程序代碼
 COPY --chown=appuser:appuser . .
