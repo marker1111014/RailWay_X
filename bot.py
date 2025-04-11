@@ -4,9 +4,6 @@ import logging
 import json
 import time
 import requests
-import subprocess
-import tempfile
-import uuid
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -41,7 +38,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
     driver = None
-    temp_dir = None
     
     try:
         # 獲取貼文 ID
@@ -53,10 +49,6 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         tweet_id = tweet_id.group(1)
-        
-        # 創建唯一的臨時用戶數據目錄
-        temp_dir = os.path.join(tempfile.gettempdir(), f'chrome_{uuid.uuid4().hex}')
-        os.makedirs(temp_dir, exist_ok=True)
         
         # 設置 Chrome 選項
         chrome_options = Options()
@@ -83,8 +75,6 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chrome_options.add_argument('--no-first-run')
         chrome_options.add_argument('--no-zygote')
         chrome_options.add_argument('--single-process')
-        chrome_options.add_argument(f'--user-data-dir={temp_dir}')
-        chrome_options.add_argument('--remote-debugging-port=0')  # 使用隨機端口
         chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
         chrome_options.add_experimental_option('useAutomationExtension', False)
 
@@ -203,13 +193,6 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 driver.quit()
             except Exception as e:
                 logging.error(f"Error quitting driver: {str(e)}")
-        
-        if temp_dir:
-            try:
-                import shutil
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                logging.error(f"Error cleaning up temp directory: {str(e)}")
 
 def main():
     """主程序"""
