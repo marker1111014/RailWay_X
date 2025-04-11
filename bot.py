@@ -11,6 +11,8 @@ from playwright.async_api import async_playwright
 import asyncio
 import requests
 from fake_useragent import UserAgent
+import json
+import platform
 
 # 載入環境變數
 load_dotenv()
@@ -36,6 +38,33 @@ NITTER_INSTANCES = [
     "https://nitter.moomoo.me"
 ]
 
+# 瀏覽器指紋
+BROWSER_FINGERPRINTS = {
+    "chrome": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+        "accept_language": "en-US,en;q=0.9",
+        "sec_ch_ua": '"Google Chrome";v="91", "Chromium";v="91", ";Not A Brand";v="99"',
+        "sec_ch_ua_mobile": "?0",
+        "sec_ch_ua_platform": '"Windows"',
+        "upgrade_insecure_requests": "1",
+        "sec_fetch_dest": "document",
+        "sec_fetch_mode": "navigate",
+        "sec_fetch_site": "none",
+        "sec_fetch_user": "?1"
+    },
+    "firefox": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "accept_language": "en-US,en;q=0.5",
+        "accept_encoding": "gzip, deflate, br",
+        "dnt": "1",
+        "connection": "keep-alive",
+        "upgrade_insecure_requests": "1",
+        "te": "Trailers"
+    }
+}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
     user_id = update.effective_user.id
@@ -46,8 +75,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '請直接發送 X.com 的貼文連結給我，我會幫你提取圖片。'
     )
 
+def get_random_headers(browser_type="chrome"):
+    """生成隨機請求頭，模擬真實瀏覽器"""
+    ua = UserAgent()
+    headers = {
+        "User-Agent": ua.random,
+        "Accept": BROWSER_FINGERPRINTS[browser_type]["accept"],
+        "Accept-Language": BROWSER_FINGERPRINTS[browser_type]["accept_language"],
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0"
+    }
+    
+    # 添加瀏覽器特定的頭部
+    if browser_type == "chrome":
+        headers.update({
+            "Sec-Ch-Ua": BROWSER_FINGERPRINTS[browser_type]["sec_ch_ua"],
+            "Sec-Ch-Ua-Mobile": BROWSER_FINGERPRINTS[browser_type]["sec_ch_ua_mobile"],
+            "Sec-Ch-Ua-Platform": BROWSER_FINGERPRINTS[browser_type]["sec_ch_ua_platform"],
+            "Sec-Fetch-Dest": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_dest"],
+            "Sec-Fetch-Mode": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_mode"],
+            "Sec-Fetch-Site": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_site"],
+            "Sec-Fetch-User": BROWSER_FINGERPRINTS[browser_type]["sec_fetch_user"]
+        })
+    elif browser_type == "firefox":
+        headers.update({
+            "Accept-Encoding": BROWSER_FINGERPRINTS[browser_type]["accept_encoding"],
+            "TE": BROWSER_FINGERPRINTS[browser_type]["te"]
+        })
+    
+    return headers
+
+def extract_tweet_info(url):
+    """從 URL 中提取用戶名和推文 ID"""
+    url = url.replace('x.com', 'twitter.com')
+    pattern = r'(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)'
+    match = re.search(pattern, url)
+    
+    if not match:
+        raise ValueError(f"無效的推文連結格式: {url}")
+        
+    username, tweet_id = match.groups()
+    return username, tweet_id
+
 async def extract_images_from_nitter(tweet_url, update):
-    """使用 Nitter 提取圖片"""
+    """使用 Nitter 提取圖片，使用更真實的瀏覽器行為"""
     user_id = update.effective_user.id
     username = update.effective_user.username
     logging.info(f"用戶 {username} (ID: {user_id}) 開始使用 Nitter 方法提取圖片: {tweet_url}")
@@ -57,50 +130,137 @@ async def extract_images_from_nitter(tweet_url, update):
         username, tweet_id = extract_tweet_info(tweet_url)
         logging.info(f"從 URL 提取到用戶名: {username}, 推文 ID: {tweet_id}")
         
+        # 創建會話對象，保持 cookie
+        session = requests.Session()
+        
         # 嘗試多個 Nitter 實例
         for nitter_instance in NITTER_INSTANCES:
             try:
+                # 首先訪問用戶主頁，模擬真實瀏覽行為
+                user_profile_url = f"{nitter_instance}/{username}"
+                logging.info(f"訪問用戶主頁: {user_profile_url}")
+                
+                # 使用隨機瀏覽器類型
+                browser_type = random.choice(["chrome", "firefox"])
+                headers = get_random_headers(browser_type)
+                headers["Referer"] = "https://www.google.com/"  # 模擬從 Google 搜索進入
+                
+                # 添加隨機延遲
+                delay = random.uniform(2, 5)
+                logging.info(f"等待 {delay:.2f} 秒...")
+                time.sleep(delay)
+                
+                # 訪問用戶主頁
+                profile_response = session.get(
+                    user_profile_url,
+                    headers=headers,
+                    timeout=20
+                )
+                
+                if profile_response.status_code != 200:
+                    logging.warning(f"訪問用戶主頁失敗，狀態碼: {profile_response.status_code}")
+                    continue
+                
                 # 構建 Nitter URL
                 nitter_url = f"{nitter_instance}/{username}/status/{tweet_id}"
                 logging.info(f"嘗試使用 Nitter 實例: {nitter_instance}")
                 logging.info(f"請求 URL: {nitter_url}")
                 
-                # 發送請求
-                headers = get_random_headers()
-                logging.info(f"使用請求頭: {headers['User-Agent']}")
-                response = requests.get(nitter_url, headers=headers, timeout=20)
+                # 更新請求頭，添加 Referer
+                headers["Referer"] = user_profile_url
                 
-                if response.status_code == 200:
-                    logging.info(f"Nitter 實例 {nitter_instance} 返回狀態碼: {response.status_code}")
-                    # 解析頁面
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    
-                    # 查找圖片容器
-                    image_containers = []
-                    
-                    # 嘗試不同的容器
-                    containers = soup.find_all("div", class_=["attachments", "gallery-row", "tweet-content", "tweet-body", "media-container", "attachment", "media"])
-                    if containers:
-                        logging.info(f"找到 {len(containers)} 個圖片容器")
-                        image_containers.extend(containers)
-                    
-                    # 如果沒有找到容器，使用整個頁面
-                    if not image_containers:
-                        logging.info("未找到圖片容器，使用整個頁面")
-                        image_containers = [soup]
-                    
-                    # 提取圖片 URL
-                    images = []
-                    for container in image_containers:
-                        # 嘗試不同的圖片選擇器
-                        img_elements = container.find_all("img", class_=["attachment image", "tweet-img", "media-image"])
-                        if not img_elements:
-                            img_elements = container.find_all("img", attrs={"alt": "Image"})
-                        if not img_elements:
-                            img_elements = container.find_all("img")
-                        
-                        logging.info(f"找到 {len(img_elements)} 個圖片元素")
-                        
+                # 添加隨機延遲
+                delay = random.uniform(1, 3)
+                logging.info(f"等待 {delay:.2f} 秒...")
+                time.sleep(delay)
+                
+                # 發送請求
+                response = session.get(
+                    nitter_url,
+                    headers=headers,
+                    timeout=20
+                )
+                
+                if response.status_code == 429:
+                    logging.warning("觸發速率限制 (429 Too Many Requests)")
+                    delay = random.uniform(30, 60)
+                    logging.info(f"等待 {delay:.2f} 秒後重試...")
+                    time.sleep(delay)
+                    continue
+                elif response.status_code != 200:
+                    logging.error(f"請求失敗，狀態碼: {response.status_code}")
+                    continue
+                
+                # 檢查響應內容
+                html_content = response.text
+                logging.info(f"Nitter 請求狀態碼: {response.status_code}")
+                logging.info(f"HTML 內容是否為空: {not bool(html_content)}")
+                logging.info(f"HTML 內容長度: {len(html_content)} 字符")
+                
+                if not html_content:
+                    logging.warning("HTML 內容為空，嘗試下一個 Nitter 實例")
+                    continue
+                
+                # 解析頁面
+                soup = BeautifulSoup(html_content, "html.parser")
+                
+                # 檢查頁面標題，判斷是否為錯誤頁面
+                page_title = soup.title.string if soup.title else ""
+                if "Error" in page_title or "Not Found" in page_title:
+                    logging.error(f"頁面標題包含錯誤信息: {page_title}")
+                    continue
+                
+                # 查找圖片容器
+                image_containers = []
+                
+                # 嘗試不同的容器
+                containers = soup.find_all("div", class_=["attachments", "gallery-row", "tweet-content", "tweet-body", "media-container", "attachment", "media"])
+                if containers:
+                    logging.info(f"找到 {len(containers)} 個圖片容器")
+                    image_containers.extend(containers)
+                
+                # 如果沒有找到容器，使用整個頁面
+                if not image_containers:
+                    logging.info("未找到圖片容器，使用整個頁面")
+                    image_containers = [soup]
+                
+                # 提取圖片 URL
+                images = []
+                
+                # 1. 嘗試 still-image 中的圖片
+                for container in image_containers:
+                    still_images = container.find_all("a", class_="still-image")
+                    if still_images:
+                        logging.info("找到 still-image 元素")
+                        for still_image in still_images:
+                            href = still_image.get('href', '')
+                            if href:
+                                # 構建完整的 URL
+                                if href.startswith('//'):
+                                    img_url = 'https:' + href
+                                elif href.startswith('/'):
+                                    img_url = f"{nitter_instance}{href}"
+                                else:
+                                    img_url = href
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"從 still-image 找到圖片URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"從 still-image 找到圖片URL: {img_url}")
+                
+                # 2. 嘗試 attachment image
+                for container in image_containers:
+                    img_elements = container.find_all("img", class_="attachment image")
+                    if img_elements:
+                        logging.info("找到 attachment image 元素")
                         for img in img_elements:
                             if 'src' in img.attrs:
                                 img_url = img['src']
@@ -117,20 +277,181 @@ async def extract_images_from_nitter(tweet_url, update):
                                     if "/orig/" not in original_url and "/media/" in original_url:
                                         original_url = original_url.replace("/media/", "/orig/media/")
                                     images.append(original_url)
-                                    logging.info(f"轉換圖片 URL: {img_url} -> {original_url}")
+                                    logging.info(f"從 attachment image 找到圖片URL: {img_url} -> {original_url}")
                                 else:
                                     images.append(img_url)
-                                    logging.info(f"使用原始圖片 URL: {img_url}")
-                    
-                    if images:
-                        logging.info(f"成功找到 {len(images)} 張圖片")
-                        for img_url in images:
-                            logging.info(f"發送圖片: {img_url}")
-                            await update.message.reply_photo(img_url)
-                        return True
-                    else:
-                        logging.info("未找到圖片")
-                    
+                                    logging.info(f"從 attachment image 找到圖片URL: {img_url}")
+                
+                # 3. 嘗試 tweet-img
+                for container in image_containers:
+                    img_elements = container.find_all("img", class_="tweet-img")
+                    if img_elements:
+                        logging.info("找到 tweet-img 元素")
+                        for img in img_elements:
+                            if 'src' in img.attrs:
+                                img_url = img['src']
+                                if img_url.startswith('//'):
+                                    img_url = 'https:' + img_url
+                                elif img_url.startswith('/'):
+                                    img_url = f"{nitter_instance}{img_url}"
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"從 tweet-img 找到圖片URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"從 tweet-img 找到圖片URL: {img_url}")
+                
+                # 4. 嘗試 media-image
+                for container in image_containers:
+                    img_elements = container.find_all("img", class_="media-image")
+                    if img_elements:
+                        logging.info("找到 media-image 元素")
+                        for img in img_elements:
+                            if 'src' in img.attrs:
+                                img_url = img['src']
+                                if img_url.startswith('//'):
+                                    img_url = 'https:' + img_url
+                                elif img_url.startswith('/'):
+                                    img_url = f"{nitter_instance}{img_url}"
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"從 media-image 找到圖片URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"從 media-image 找到圖片URL: {img_url}")
+                
+                # 5. 嘗試 alt="Image"
+                for container in image_containers:
+                    img_elements = container.find_all("img", attrs={"alt": "Image"})
+                    if img_elements:
+                        logging.info("找到 alt='Image' 元素")
+                        for img in img_elements:
+                            if 'src' in img.attrs:
+                                img_url = img['src']
+                                if img_url.startswith('//'):
+                                    img_url = 'https:' + img_url
+                                elif img_url.startswith('/'):
+                                    img_url = f"{nitter_instance}{img_url}"
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"從 alt='Image' 找到圖片URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"從 alt='Image' 找到圖片URL: {img_url}")
+                
+                # 6. 嘗試所有 img 標籤
+                for container in image_containers:
+                    img_elements = container.find_all("img")
+                    if img_elements:
+                        logging.info("找到所有 img 標籤")
+                        for img in img_elements:
+                            if 'src' in img.attrs:
+                                img_url = img['src']
+                                if img_url.startswith('//'):
+                                    img_url = 'https:' + img_url
+                                elif img_url.startswith('/'):
+                                    img_url = f"{nitter_instance}{img_url}"
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"從 img 標籤找到圖片URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"從 img 標籤找到圖片URL: {img_url}")
+                
+                # 7. 嘗試 a 標籤中的圖片
+                for container in image_containers:
+                    a_tags = container.find_all("a", href=re.compile(r'/pic/|/img/'))
+                    if a_tags:
+                        logging.info("找到包含圖片鏈接的 a 標籤")
+                        for a in a_tags:
+                            href = a.get('href', '')
+                            if href:
+                                # 構建完整的 URL
+                                if href.startswith('//'):
+                                    img_url = 'https:' + href
+                                elif href.startswith('/'):
+                                    img_url = f"{nitter_instance}{href}"
+                                else:
+                                    img_url = href
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"從 a 標籤找到圖片URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"從 a 標籤找到圖片URL: {img_url}")
+                
+                # 如果沒有找到圖片，嘗試直接從頁面中提取所有圖片 URL
+                if not images:
+                    logging.info("嘗試直接從頁面中提取所有圖片 URL")
+                    all_links = soup.find_all("a", href=re.compile(r'/pic/|/img/'))
+                    for link in all_links:
+                        href = link.get('href', '')
+                        if href:
+                            # 構建完整的 URL
+                            if href.startswith('//'):
+                                img_url = 'https:' + href
+                            elif href.startswith('/'):
+                                img_url = f"{nitter_instance}{href}"
+                            else:
+                                img_url = href
+                            
+                            # 轉換為原圖 URL
+                            if "/pic/" in img_url:
+                                original_url = img_url.replace("/pic/", "/img/")
+                                if "?" in original_url:
+                                    original_url = original_url.split("?")[0]
+                                if "/orig/" not in original_url and "/media/" in original_url:
+                                    original_url = original_url.replace("/media/", "/orig/media/")
+                                images.append(original_url)
+                                logging.info(f"直接找到圖片URL: {img_url} -> {original_url}")
+                            else:
+                                images.append(img_url)
+                                logging.info(f"直接找到圖片URL: {img_url}")
+                
+                if images:
+                    logging.info(f"成功找到 {len(images)} 張圖片")
+                    for img_url in images:
+                        logging.info(f"發送圖片: {img_url}")
+                        await update.message.reply_photo(img_url)
+                    return True
+                else:
+                    logging.info("未找到圖片")
+                
             except Exception as e:
                 logging.error(f"Nitter 實例 {nitter_instance} 失敗: {str(e)}")
                 continue
@@ -141,37 +462,6 @@ async def extract_images_from_nitter(tweet_url, update):
     except Exception as e:
         logging.error(f"Nitter 提取失敗: {str(e)}")
         return False
-
-def extract_tweet_info(url):
-    """從 URL 中提取用戶名和推文 ID"""
-    url = url.replace('x.com', 'twitter.com')
-    pattern = r'(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)'
-    match = re.search(pattern, url)
-    
-    if not match:
-        raise ValueError(f"無效的推文連結格式: {url}")
-        
-    username, tweet_id = match.groups()
-    return username, tweet_id
-
-def get_random_headers():
-    """生成隨機請求頭"""
-    ua = UserAgent()
-    headers = {
-        "User-Agent": ua.random,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Cache-Control": "max-age=0",
-        "Pragma": "no-cache",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1"
-    }
-    return headers
 
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
@@ -319,115 +609,9 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 如果 Playwright 方法失敗或未找到圖片，嘗試使用 Nitter
         if not playwright_success:
             logging.info("Playwright 方法未找到圖片，嘗試使用 Nitter...")
+            if await extract_images_from_nitter(tweet_url, update):
+                return
             
-            # 提取用戶名和推文 ID
-            username, tweet_id = extract_tweet_info(tweet_url)
-            logging.info(f"從 URL 提取到用戶名: {username}, 推文 ID: {tweet_id}")
-            
-            # 嘗試多個 Nitter 實例
-            for nitter_instance in NITTER_INSTANCES:
-                try:
-                    # 構建 Nitter URL
-                    nitter_url = f"{nitter_instance}/{username}/status/{tweet_id}"
-                    logging.info(f"嘗試使用 Nitter 實例: {nitter_instance}")
-                    logging.info(f"請求 URL: {nitter_url}")
-                    
-                    # 發送請求
-                    headers = get_random_headers()
-                    # 添加 Referer 頭
-                    headers["Referer"] = f"{nitter_instance}/{username}"
-                    logging.info(f"使用請求頭: {headers['User-Agent']}")
-                    logging.info(f"使用 Referer: {headers['Referer']}")
-                    
-                    # 添加延遲
-                    delay = random.uniform(1, 3)
-                    logging.info(f"等待 {delay:.2f} 秒...")
-                    await asyncio.sleep(delay)
-                    
-                    # 發送請求
-                    response = requests.get(nitter_url, headers=headers, timeout=20)
-                    
-                    # 記錄狀態碼和 HTML 內容
-                    logging.info(f"Nitter 請求狀態碼: {response.status_code}")
-                    if response.status_code == 200:
-                        html_content = response.text
-                        logging.info(f"HTML 內容是否為空: {not bool(html_content)}")
-                        logging.info(f"HTML 內容長度: {len(html_content)} 字符")
-                        
-                        if html_content:
-                            # 解析頁面
-                            soup = BeautifulSoup(html_content, "html.parser")
-                            
-                            # 檢查頁面標題，判斷是否為錯誤頁面
-                            page_title = soup.title.string if soup.title else ""
-                            if "Error" in page_title or "Not Found" in page_title:
-                                logging.error(f"頁面標題包含錯誤信息: {page_title}")
-                                continue
-                            
-                            # 查找圖片容器
-                            image_containers = []
-                            
-                            # 嘗試不同的容器
-                            containers = soup.find_all("div", class_=["attachments", "gallery-row", "tweet-content", "tweet-body", "media-container", "attachment", "media"])
-                            if containers:
-                                logging.info(f"找到 {len(containers)} 個圖片容器")
-                                image_containers.extend(containers)
-                            
-                            # 如果沒有找到容器，使用整個頁面
-                            if not image_containers:
-                                logging.info("未找到圖片容器，使用整個頁面")
-                                image_containers = [soup]
-                            
-                            # 提取圖片 URL
-                            images = []
-                            for container in image_containers:
-                                # 嘗試不同的圖片選擇器
-                                img_elements = container.find_all("img", class_=["attachment image", "tweet-img", "media-image"])
-                                if not img_elements:
-                                    img_elements = container.find_all("img", attrs={"alt": "Image"})
-                                if not img_elements:
-                                    img_elements = container.find_all("img")
-                                
-                                logging.info(f"找到 {len(img_elements)} 個圖片元素")
-                                
-                                for img in img_elements:
-                                    if 'src' in img.attrs:
-                                        img_url = img['src']
-                                        if img_url.startswith('//'):
-                                            img_url = 'https:' + img_url
-                                        elif img_url.startswith('/'):
-                                            img_url = f"{nitter_instance}{img_url}"
-                                        
-                                        # 轉換為原圖 URL
-                                        if "/pic/" in img_url:
-                                            original_url = img_url.replace("/pic/", "/img/")
-                                            if "?" in original_url:
-                                                original_url = original_url.split("?")[0]
-                                            if "/orig/" not in original_url and "/media/" in original_url:
-                                                original_url = original_url.replace("/media/", "/orig/media/")
-                                            images.append(original_url)
-                                            logging.info(f"轉換圖片 URL: {img_url} -> {original_url}")
-                                        else:
-                                            images.append(img_url)
-                                            logging.info(f"使用原始圖片 URL: {img_url}")
-                            
-                            if images:
-                                logging.info(f"成功找到 {len(images)} 張圖片")
-                                for img_url in images:
-                                    logging.info(f"發送圖片: {img_url}")
-                                    await update.message.reply_photo(img_url)
-                                return
-                            else:
-                                logging.info("未找到圖片")
-                        else:
-                            logging.info("HTML 內容為空")
-                    else:
-                        logging.info(f"Nitter 請求失敗，狀態碼: {response.status_code}")
-                except Exception as e:
-                    logging.error(f"Nitter 實例 {nitter_instance} 失敗: {str(e)}")
-                    continue
-            
-            logging.info("所有 Nitter 實例都失敗了")
             logging.info("未找到任何圖片或影片")
             await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     
