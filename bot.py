@@ -28,21 +28,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
 # Nitter 實例列表
 NITTER_INSTANCES = [
-    "https://nitter.net",
-    "https://nitter.cz",
-    "https://nitter.unixfox.eu",
-    "https://nitter.fdn.fr",
-    "https://nitter.1d4.us",
-    "https://nitter.kavin.rocks",
-    "https://nitter.moomoo.me",
-    "https://nitter.weiler.rocks",
-    "https://nitter.esmailelbob.xyz",
-    "https://nitter.privacydev.net",
-    "https://nitter.poast.org",
-    "https://nitter.mint.lgbt",
-    "https://nitter.foss.wtf",
-    "https://nitter.projectsegfau.lt",
-    "https://nitter.woodland.cafe"
+    "https://nitter.net"
 ]
 
 # 隨機打亂 Nitter 實例列表
@@ -692,6 +678,157 @@ async def extract_images_with_guest_token(tweet_id, update):
     
     return media_found
 
+async def check_tweet_accessibility(tweet_id: str) -> tuple[bool, str, bool]:
+    """
+    檢查推文是否可以訪問
+    返回: (是否可訪問, 錯誤訊息, 是否需要使用 Nitter)
+    """
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-extensions',
+                    '--disable-infobars',
+                    '--disable-notifications',
+                    '--disable-popup-blocking',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-site-isolation-trials',
+                    '--disable-web-security',
+                    '--allow-running-insecure-content',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process'
+                ]
+            )
+            
+            page = await browser.new_page()
+            await page.set_extra_http_headers({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            })
+            
+            try:
+                await page.goto(f"https://twitter.com/i/status/{tweet_id}", timeout=30000)
+                await page.wait_for_load_state('networkidle', timeout=30000)
+                
+                page_content = await page.content()
+                
+                if "Log in to X" in page_content or "Sign in to X" in page_content:
+                    return False, "這則貼文需要登錄才能查看，正在嘗試使用 Nitter 提取...", True
+                elif "This Tweet is unavailable" in page_content or "Tweet unavailable" in page_content:
+                    return False, "這則貼文無法訪問，可能已被刪除或設為私密。", False
+                elif "Something went wrong" in page_content:
+                    return False, "Twitter 發生錯誤，正在嘗試使用 Nitter 提取...", True
+                
+                return True, "", False
+                
+            except Exception as e:
+                logger.error(f"Error checking tweet accessibility: {str(e)}")
+                return False, "檢查貼文可訪問性時發生錯誤，請稍後再試。", False
+            finally:
+                await browser.close()
+                
+    except Exception as e:
+        logger.error(f"Error in check_tweet_accessibility: {str(e)}")
+        return False, "檢查貼文可訪問性時發生錯誤，請稍後再試。", False
+
+async def extract_images_from_nitter(tweet_id: str, update: Update) -> bool:
+    """
+    從 Nitter 提取圖片
+    返回: 是否成功提取到媒體
+    """
+    media_found = False
+    
+    # 遍歷所有 Nitter 實例
+    for nitter_base in NITTER_INSTANCES:
+        if media_found:
+            break
+            
+        try:
+            logger.info(f"Trying Nitter instance: {nitter_base}")
+            nitter_url = f"{nitter_base}/i/status/{tweet_id}"
+            
+            # 設置請求頭
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0'
+            }
+            
+            # 發送請求
+            logger.info(f"Sending request to: {nitter_url}")
+            response = requests.get(nitter_url, headers=headers, timeout=10)
+            
+            # 檢查響應狀態
+            if response.status_code != 200:
+                logger.warning(f"Failed to access Nitter instance {nitter_base}, status code: {response.status_code}")
+                continue
+            
+            # 獲取頁面內容
+            nitter_content = response.text
+            logger.info(f"Nitter page content length: {len(nitter_content)}")
+            
+            # 檢查頁面是否包含錯誤訊息
+            if "Error loading tweet" in nitter_content or "Tweet not found" in nitter_content:
+                logger.warning(f"Tweet not found on Nitter instance: {nitter_base}")
+                continue
+            
+            # 使用 BeautifulSoup 解析頁面
+            logger.info("Parsing Nitter page with BeautifulSoup...")
+            nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
+            
+            # 查找所有圖片
+            logger.info("Searching for images in Nitter page...")
+            nitter_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
+            logger.info(f"Found {len(nitter_images)} images with class 'tweet-image'")
+            
+            # 如果沒有找到帶有 tweet-image 類的圖片，嘗試查找所有圖片
+            if not nitter_images:
+                logger.info("No images with class 'tweet-image', trying all images...")
+                all_images = nitter_soup.find_all('img')
+                logger.info(f"Found {len(all_images)} total images")
+                
+                # 過濾出可能是推文圖片的圖片
+                for img in all_images:
+                    src = img.get('src', '')
+                    if src and ('pbs.twimg.com/media/' in src or 'pbs.twimg.com/tweet_video_thumb/' in src):
+                        nitter_images.append(img)
+                
+                logger.info(f"Filtered to {len(nitter_images)} potential tweet images")
+            
+            if nitter_images:
+                logger.info(f"Found {len(nitter_images)} images with Nitter instance: {nitter_base}")
+                for img in nitter_images:
+                    img_url = img['src']
+                    if img_url.startswith('//'):
+                        img_url = 'https:' + img_url
+                    logger.info(f"Sending image from Nitter: {img_url}")
+                    await update.message.reply_photo(img_url)
+                    media_found = True
+                
+                # 如果成功提取了媒體，跳出循環
+                if media_found:
+                    logger.info(f"Successfully extracted media from Nitter instance: {nitter_base}")
+                    break
+            else:
+                logger.info(f"No images found on Nitter instance: {nitter_base}")
+                
+        except Exception as e:
+            logger.error(f"Error with Nitter instance {nitter_base}: {str(e)}")
+            continue
+    
+    return media_found
+
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
     try:
@@ -707,6 +844,22 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         logger.info(f"Extracted tweet ID: {tweet_id}")
+        
+        # 先檢查貼文是否可以訪問
+        is_accessible, error_message, use_nitter = await check_tweet_accessibility(tweet_id)
+        
+        # 如果需要使用 Nitter
+        if use_nitter:
+            await update.message.reply_text(error_message)
+            media_found = await extract_images_from_nitter(tweet_id, update)
+            if not media_found:
+                await update.message.reply_text('無法從 Nitter 提取媒體，請稍後再試。')
+            return
+            
+        # 如果貼文無法訪問且不需要使用 Nitter
+        if not is_accessible:
+            await update.message.reply_text(error_message)
+            return
         
         media_found = False
         media_container_found = False
@@ -768,28 +921,6 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await page.wait_for_load_state('networkidle', timeout=30000)
                     except TimeoutError:
                         logger.warning("Network idle timeout, continuing anyway")
-                    
-                    # 檢查頁面內容
-                    page_content = await page.content()
-                    logger.info("Checking page content...")
-                    
-                    # 檢查是否需要登錄
-                    if "Log in to X" in page_content or "Sign in to X" in page_content:
-                        logger.error("Login required")
-                        await update.message.reply_text('這則貼文需要登錄才能查看，請確保貼文是公開的。')
-                        return
-                    
-                    # 檢查推文是否存在
-                    if "This Tweet is unavailable" in page_content or "Tweet unavailable" in page_content:
-                        logger.error("Tweet unavailable")
-                        await update.message.reply_text('這則貼文無法訪問，可能已被刪除或設為私密。')
-                        return
-                    
-                    # 檢查是否有錯誤訊息
-                    if "Something went wrong" in page_content:
-                        logger.error("Twitter error")
-                        # 不要立即返回，繼續嘗試提取媒體
-                        logger.info("Continuing despite Twitter error message")
                     
                     # 等待更長時間以確保動態內容加載
                     logger.info("Waiting for dynamic content...")
