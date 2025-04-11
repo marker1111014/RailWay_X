@@ -19,6 +19,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 # 獲取環境變數
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -35,17 +36,21 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # 獲取貼文 ID
         tweet_url = update.message.text
-        tweet_id = re.search(r'/status/(\d+)', tweet_url)
+        logger.info(f"Processing tweet URL: {tweet_url}")
         
+        tweet_id = re.search(r'/status/(\d+)', tweet_url)
         if not tweet_id:
+            logger.error("Invalid tweet URL format")
             await update.message.reply_text('請發送有效的 X.com 貼文連結！')
             return
             
         tweet_id = tweet_id.group(1)
+        logger.info(f"Extracted tweet ID: {tweet_id}")
         
         # 使用 Playwright 訪問貼文頁面
         async with async_playwright() as p:
             try:
+                logger.info("Launching browser...")
                 # 啟動瀏覽器
                 browser = await p.chromium.launch(
                     headless=True,
@@ -71,6 +76,7 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ]
                 )
                 
+                logger.info("Creating new page...")
                 # 創建新頁面
                 page = await browser.new_page()
                 
@@ -79,38 +85,48 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 })
                 
+                logger.info(f"Navigating to tweet URL: https://twitter.com/i/status/{tweet_id}")
                 # 訪問貼文頁面
                 await page.goto(f"https://twitter.com/i/status/{tweet_id}")
                 
                 # 等待頁面加載
+                logger.info("Waiting for page to load...")
                 await page.wait_for_load_state('networkidle')
                 await asyncio.sleep(5)  # 額外等待動態內容加載
                 
                 # 獲取頁面源碼
+                logger.info("Getting page content...")
                 page_source = await page.content()
                 soup = BeautifulSoup(page_source, 'html.parser')
                 
                 # 查找所有圖片
+                logger.info("Searching for images...")
                 images = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/media/')})
                 if images:
+                    logger.info(f"Found {len(images)} images")
                     for img in images:
                         img_url = img['src']
                         # 移除圖片大小限制
                         img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                        logger.info(f"Sending image: {img_url}")
                         await update.message.reply_photo(img_url)
                     return
                 
                 # 如果沒有找到圖片，檢查是否有影片預覽圖
+                logger.info("Searching for video previews...")
                 video_previews = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/tweet_video_thumb/')})
                 if video_previews:
+                    logger.info(f"Found {len(video_previews)} video previews")
                     for preview in video_previews:
                         await update.message.reply_photo(preview['src'])
                     return
                 
                 # 如果還是沒有找到，嘗試使用 JavaScript 獲取
                 try:
+                    logger.info("Trying JavaScript extraction...")
                     # 等待媒體元素加載
                     media_elements = await page.query_selector_all('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')
+                    logger.info(f"Found {len(media_elements)} media elements")
                     
                     for element in media_elements:
                         data_testid = await element.get_attribute('data-testid')
@@ -120,28 +136,32 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 img_url = await img_element.get_attribute('src')
                                 if img_url:
                                     img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                    logger.info(f"Sending image from JavaScript: {img_url}")
                                     await update.message.reply_photo(img_url)
                         elif data_testid == 'videoPlayer':
                             img_element = await element.query_selector('img')
                             if img_element:
                                 preview_url = await img_element.get_attribute('src')
                                 if preview_url:
+                                    logger.info(f"Sending video preview from JavaScript: {preview_url}")
                                     await update.message.reply_photo(preview_url)
                     return
                 except Exception as e:
-                    logging.error(f"Error with JavaScript extraction: {str(e)}")
+                    logger.error(f"Error with JavaScript extraction: {str(e)}")
                 
+                logger.info("No media found in tweet")
                 await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     
             except Exception as e:
-                logging.error(f"Error fetching tweet: {str(e)}")
+                logger.error(f"Error fetching tweet: {str(e)}")
                 await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
             finally:
                 # 關閉瀏覽器
+                logger.info("Closing browser...")
                 await browser.close()
                     
     except Exception as e:
-        logging.error(f"Error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
         await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
 
 def main():
