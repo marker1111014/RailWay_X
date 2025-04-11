@@ -40,6 +40,20 @@ FREE_PROXIES = [
     "http://51.159.115.233:3128",
     "http://51.159.115.233:3128",
     "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
 ]
 
 # 瀏覽器指紋
@@ -74,6 +88,19 @@ BROWSER_FINGERPRINTS = {
         "accept_encoding": "gzip, deflate, br",
         "dnt": "1",
         "connection": "keep-alive"
+    },
+    "edge": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept_language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "sec_ch_ua": '"Microsoft Edge";v="120", "Chromium";v="120", "Not-A.Brand";v="99"',
+        "sec_ch_ua_mobile": "?0",
+        "sec_ch_ua_platform": '"Windows"',
+        "upgrade_insecure_requests": "1",
+        "sec_fetch_dest": "document",
+        "sec_fetch_mode": "navigate",
+        "sec_fetch_site": "none",
+        "sec_fetch_user": "?1"
     }
 }
 
@@ -82,7 +109,11 @@ SEARCH_ENGINES = [
     "https://www.google.com/search?q=",
     "https://www.bing.com/search?q=",
     "https://search.yahoo.com/search?p=",
-    "https://duckduckgo.com/?q="
+    "https://duckduckgo.com/?q=",
+    "https://www.baidu.com/s?wd=",
+    "https://yandex.com/search/?text=",
+    "https://www.qwant.com/?q=",
+    "https://www.ecosia.org/search?q="
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,6 +146,20 @@ def get_random_headers(browser_type="chrome"):
     
     # 添加隨機的 Cookie
     headers["Cookie"] = f"cf_clearance={random.randint(1000000000, 9999999999)}; _ga=GA1.1.{random.randint(1000000000, 9999999999)}.{int(time.time())}"
+    
+    # 添加更多的請求頭
+    headers.update({
+        "Cache-Control": "max-age=0",
+        "Connection": "keep-alive",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Forwarded-For": f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}",
+        "X-Real-IP": f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}"
+    })
     
     return headers
 
@@ -190,7 +235,7 @@ async def extract_images_from_nitter(tweet_url, update):
                 logging.info(f"訪問用戶主頁: {user_profile_url}")
                 
                 # 使用隨機瀏覽器類型
-                browser_type = random.choice(["chrome", "firefox", "safari", "random"])
+                browser_type = random.choice(["chrome", "firefox", "safari", "edge", "random"])
                 headers = get_random_headers(browser_type)
                 
                 # 添加隨機延遲
