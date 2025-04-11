@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError
 import asyncio
+import random
 
 # 載入環境變數
 load_dotenv()
@@ -43,12 +44,102 @@ NITTER_INSTANCES = [
     "https://nitter.woodland.cafe"
 ]
 
+# 隨機打亂 Nitter 實例列表
+random.shuffle(NITTER_INSTANCES)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
     await update.message.reply_text(
         '歡迎使用 X.com 圖片提取機器人！\n'
         '請直接發送 X.com 的貼文連結給我，我會幫你提取圖片。'
     )
+
+async def extract_images_with_requests(tweet_id, update):
+    """使用 requests 庫從 Nitter 提取圖片"""
+    media_found = False
+    
+    # 遍歷所有 Nitter 實例
+    for nitter_base in NITTER_INSTANCES:
+        if media_found:
+            break
+            
+        try:
+            logger.info(f"Trying Nitter instance with requests: {nitter_base}")
+            nitter_url = f"{nitter_base}/i/status/{tweet_id}"
+            
+            # 設置請求頭
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0'
+            }
+            
+            # 發送請求
+            logger.info(f"Sending request to: {nitter_url}")
+            response = requests.get(nitter_url, headers=headers, timeout=10)
+            
+            # 檢查響應狀態
+            if response.status_code != 200:
+                logger.warning(f"Failed to access Nitter instance {nitter_base}, status code: {response.status_code}")
+                continue
+            
+            # 獲取頁面內容
+            nitter_content = response.text
+            logger.info(f"Nitter page content length: {len(nitter_content)}")
+            
+            # 檢查頁面是否包含錯誤訊息
+            if "Error loading tweet" in nitter_content or "Tweet not found" in nitter_content:
+                logger.warning(f"Tweet not found on Nitter instance: {nitter_base}")
+                continue
+            
+            # 使用 BeautifulSoup 解析頁面
+            logger.info("Parsing Nitter page with BeautifulSoup...")
+            nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
+            
+            # 查找所有圖片
+            logger.info("Searching for images in Nitter page...")
+            nitter_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
+            logger.info(f"Found {len(nitter_images)} images with class 'tweet-image'")
+            
+            # 如果沒有找到帶有 tweet-image 類的圖片，嘗試查找所有圖片
+            if not nitter_images:
+                logger.info("No images with class 'tweet-image', trying all images...")
+                all_images = nitter_soup.find_all('img')
+                logger.info(f"Found {len(all_images)} total images")
+                
+                # 過濾出可能是推文圖片的圖片
+                for img in all_images:
+                    src = img.get('src', '')
+                    if src and ('pbs.twimg.com/media/' in src or 'pbs.twimg.com/tweet_video_thumb/' in src):
+                        nitter_images.append(img)
+                
+                logger.info(f"Filtered to {len(nitter_images)} potential tweet images")
+            
+            if nitter_images:
+                logger.info(f"Found {len(nitter_images)} images with Nitter instance: {nitter_base}")
+                for img in nitter_images:
+                    img_url = img['src']
+                    if img_url.startswith('//'):
+                        img_url = 'https:' + img_url
+                    logger.info(f"Sending image from Nitter: {img_url}")
+                    await update.message.reply_photo(img_url)
+                    media_found = True
+                
+                # 如果成功提取了媒體，跳出循環
+                if media_found:
+                    logger.info(f"Successfully extracted media from Nitter instance: {nitter_base}")
+                    break
+            else:
+                logger.info(f"No images found on Nitter instance: {nitter_base}")
+                
+        except Exception as e:
+            logger.error(f"Error with Nitter instance {nitter_base}: {str(e)}")
+            continue
+    
+    return media_found
 
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
@@ -66,124 +157,51 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tweet_id = tweet_id.group(1)
         logger.info(f"Extracted tweet ID: {tweet_id}")
         
-        # 使用 Playwright 訪問貼文頁面
-        async with async_playwright() as p:
-            try:
-                logger.info("Launching browser...")
-                # 啟動瀏覽器
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=[
-                        '--no-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--disable-extensions',
-                        '--disable-infobars',
-                        '--disable-notifications',
-                        '--disable-popup-blocking',
-                        '--disable-web-security',
-                        '--disable-features=IsolateOrigins,site-per-process',
-                        '--disable-site-isolation-trials',
-                        '--disable-web-security',
-                        '--allow-running-insecure-content',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-accelerated-2d-canvas',
-                        '--no-first-run',
-                        '--no-zygote',
-                        '--single-process'
-                    ]
-                )
-                
-                logger.info("Creating new page...")
-                # 創建新頁面
-                page = await browser.new_page()
-                
-                # 設置用戶代理
-                await page.set_extra_http_headers({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                })
-                
-                # 首先嘗試使用 Nitter 提取媒體
-                media_found = False
-                
-                # 遍歷所有 Nitter 實例
-                for nitter_base in NITTER_INSTANCES:
-                    if media_found:
-                        break
-                        
-                    try:
-                        logger.info(f"Trying Nitter instance: {nitter_base}")
-                        nitter_url = f"{nitter_base}/i/status/{tweet_id}"
-                        
-                        # 訪問 Nitter 頁面
-                        try:
-                            logger.info(f"Navigating to Nitter URL: {nitter_url}")
-                            await page.goto(nitter_url, timeout=30000)
-                            logger.info("Waiting for Nitter page to load...")
-                            await page.wait_for_load_state('networkidle', timeout=30000)
-                            logger.info("Nitter page loaded successfully")
-                        except TimeoutError:
-                            logger.warning(f"Timeout accessing Nitter instance: {nitter_base}")
-                            continue
-                        
-                        # 獲取頁面源碼
-                        logger.info("Getting Nitter page content...")
-                        nitter_content = await page.content()
-                        logger.info(f"Nitter page content length: {len(nitter_content)}")
-                        
-                        # 檢查頁面是否包含錯誤訊息
-                        if "Error loading tweet" in nitter_content or "Tweet not found" in nitter_content:
-                            logger.warning(f"Tweet not found on Nitter instance: {nitter_base}")
-                            continue
-                        
-                        # 使用 BeautifulSoup 解析頁面
-                        logger.info("Parsing Nitter page with BeautifulSoup...")
-                        nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
-                        
-                        # 查找所有圖片
-                        logger.info("Searching for images in Nitter page...")
-                        nitter_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
-                        logger.info(f"Found {len(nitter_images)} images with class 'tweet-image'")
-                        
-                        # 如果沒有找到帶有 tweet-image 類的圖片，嘗試查找所有圖片
-                        if not nitter_images:
-                            logger.info("No images with class 'tweet-image', trying all images...")
-                            all_images = nitter_soup.find_all('img')
-                            logger.info(f"Found {len(all_images)} total images")
-                            
-                            # 過濾出可能是推文圖片的圖片
-                            for img in all_images:
-                                src = img.get('src', '')
-                                if src and ('pbs.twimg.com/media/' in src or 'pbs.twimg.com/tweet_video_thumb/' in src):
-                                    nitter_images.append(img)
-                            
-                            logger.info(f"Filtered to {len(nitter_images)} potential tweet images")
-                        
-                        if nitter_images:
-                            logger.info(f"Found {len(nitter_images)} images with Nitter instance: {nitter_base}")
-                            for img in nitter_images:
-                                img_url = img['src']
-                                if img_url.startswith('//'):
-                                    img_url = 'https:' + img_url
-                                logger.info(f"Sending image from Nitter: {img_url}")
-                                await update.message.reply_photo(img_url)
-                                media_found = True
-                            
-                            # 如果成功提取了媒體，跳出循環
-                            if media_found:
-                                logger.info(f"Successfully extracted media from Nitter instance: {nitter_base}")
-                                break
-                        else:
-                            logger.info(f"No images found on Nitter instance: {nitter_base}")
-                                
-                    except Exception as e:
-                        logger.error(f"Error with Nitter instance {nitter_base}: {str(e)}")
-                        continue
-                
-                # 如果 Nitter 提取失敗，嘗試使用 Twitter 直接提取
-                if not media_found:
-                    logger.info("Nitter extraction failed, trying Twitter directly...")
+        # 首先嘗試使用 requests 從 Nitter 提取媒體
+        logger.info("Trying to extract media using requests from Nitter...")
+        media_found = await extract_images_with_requests(tweet_id, update)
+        
+        # 如果 Nitter 提取失敗，嘗試使用 Playwright 從 Twitter 直接提取
+        if not media_found:
+            logger.info("Nitter extraction failed, trying Twitter directly with Playwright...")
+            
+            # 使用 Playwright 訪問貼文頁面
+            async with async_playwright() as p:
+                try:
+                    logger.info("Launching browser...")
+                    # 啟動瀏覽器
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=[
+                            '--no-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-gpu',
+                            '--disable-extensions',
+                            '--disable-infobars',
+                            '--disable-notifications',
+                            '--disable-popup-blocking',
+                            '--disable-web-security',
+                            '--disable-features=IsolateOrigins,site-per-process',
+                            '--disable-site-isolation-trials',
+                            '--disable-web-security',
+                            '--allow-running-insecure-content',
+                            '--disable-setuid-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-accelerated-2d-canvas',
+                            '--no-first-run',
+                            '--no-zygote',
+                            '--single-process'
+                        ]
+                    )
+                    
+                    logger.info("Creating new page...")
+                    # 創建新頁面
+                    page = await browser.new_page()
+                    
+                    # 設置用戶代理
+                    await page.set_extra_http_headers({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    })
                     
                     try:
                         logger.info(f"Navigating to tweet URL: https://twitter.com/i/status/{tweet_id}")
@@ -381,13 +399,13 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.error(f"Error with Twitter direct extraction: {str(e)}")
                         await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
                     
-            except Exception as e:
-                logger.error(f"Error fetching tweet: {str(e)}")
-                await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
-            finally:
-                # 關閉瀏覽器
-                logger.info("Closing browser...")
-                await browser.close()
+                except Exception as e:
+                    logger.error(f"Error fetching tweet: {str(e)}")
+                    await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
+                finally:
+                    # 關閉瀏覽器
+                    logger.info("Closing browser...")
+                    await browser.close()
                     
     except Exception as e:
         logger.error(f"Error: {str(e)}")
