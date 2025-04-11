@@ -189,6 +189,8 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # 使用 Playwright 訪問貼文頁面
         logging.info("開始使用 Playwright 方法提取圖片")
+        playwright_success = False
+        
         async with async_playwright() as p:
             try:
                 # 啟動瀏覽器
@@ -253,6 +255,7 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
                         logging.info(f"發送媒體圖片: {img_url}")
                         await update.message.reply_photo(img_url)
+                    playwright_success = True
                     return
                 
                 # 如果沒有找到圖片，檢查是否有影片預覽圖
@@ -263,6 +266,7 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for preview in video_previews:
                         logging.info(f"發送影片預覽圖: {preview['src']}")
                         await update.message.reply_photo(preview['src'])
+                    playwright_success = True
                     return
                 
                 # 如果還是沒有找到，嘗試使用 JavaScript 獲取
@@ -285,6 +289,7 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
                                     logging.info(f"發送推文圖片: {img_url}")
                                     await update.message.reply_photo(img_url)
+                                    playwright_success = True
                         elif data_testid == 'videoPlayer':
                             img_element = await element.query_selector('img')
                             if img_element:
@@ -292,107 +297,110 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 if preview_url:
                                     logging.info(f"發送影片預覽圖: {preview_url}")
                                     await update.message.reply_photo(preview_url)
-                    return
+                                    playwright_success = True
+                    
+                    if playwright_success:
+                        return
                 except Exception as e:
                     logging.error(f"JavaScript 提取失敗: {str(e)}")
                 
-                # 如果 Playwright 方法失敗，嘗試使用 Nitter
-                logging.info("Playwright 方法未找到圖片，嘗試使用 Nitter...")
-                
-                # 提取用戶名和推文 ID
-                username, tweet_id = extract_tweet_info(tweet_url)
-                logging.info(f"從 URL 提取到用戶名: {username}, 推文 ID: {tweet_id}")
-                
-                # 構建 Nitter URL
-                nitter_url = f"https://nitter.net/{username}/status/{tweet_id}"
-                logging.info(f"轉換為 Nitter URL: {nitter_url}")
-                
-                # 發送請求
-                headers = get_random_headers()
-                logging.info(f"使用請求頭: {headers['User-Agent']}")
-                response = requests.get(nitter_url, headers=headers, timeout=20)
-                
-                # 記錄狀態碼和 HTML 內容
-                logging.info(f"Nitter 請求狀態碼: {response.status_code}")
-                if response.status_code == 200:
-                    html_content = response.text
-                    logging.info(f"HTML 內容是否為空: {not bool(html_content)}")
-                    logging.info(f"HTML 內容長度: {len(html_content)} 字符")
-                    
-                    if html_content:
-                        # 解析頁面
-                        soup = BeautifulSoup(html_content, "html.parser")
-                        
-                        # 查找圖片容器
-                        image_containers = []
-                        
-                        # 嘗試不同的容器
-                        containers = soup.find_all("div", class_=["attachments", "gallery-row", "tweet-content", "tweet-body", "media-container", "attachment", "media"])
-                        if containers:
-                            logging.info(f"找到 {len(containers)} 個圖片容器")
-                            image_containers.extend(containers)
-                        
-                        # 如果沒有找到容器，使用整個頁面
-                        if not image_containers:
-                            logging.info("未找到圖片容器，使用整個頁面")
-                            image_containers = [soup]
-                        
-                        # 提取圖片 URL
-                        images = []
-                        for container in image_containers:
-                            # 嘗試不同的圖片選擇器
-                            img_elements = container.find_all("img", class_=["attachment image", "tweet-img", "media-image"])
-                            if not img_elements:
-                                img_elements = container.find_all("img", attrs={"alt": "Image"})
-                            if not img_elements:
-                                img_elements = container.find_all("img")
-                            
-                            logging.info(f"找到 {len(img_elements)} 個圖片元素")
-                            
-                            for img in img_elements:
-                                if 'src' in img.attrs:
-                                    img_url = img['src']
-                                    if img_url.startswith('//'):
-                                        img_url = 'https:' + img_url
-                                    elif img_url.startswith('/'):
-                                        img_url = f"https://nitter.net{img_url}"
-                                    
-                                    # 轉換為原圖 URL
-                                    if "/pic/" in img_url:
-                                        original_url = img_url.replace("/pic/", "/img/")
-                                        if "?" in original_url:
-                                            original_url = original_url.split("?")[0]
-                                        if "/orig/" not in original_url and "/media/" in original_url:
-                                            original_url = original_url.replace("/media/", "/orig/media/")
-                                        images.append(original_url)
-                                        logging.info(f"轉換圖片 URL: {img_url} -> {original_url}")
-                                    else:
-                                        images.append(img_url)
-                                        logging.info(f"使用原始圖片 URL: {img_url}")
-                        
-                        if images:
-                            logging.info(f"成功找到 {len(images)} 張圖片")
-                            for img_url in images:
-                                logging.info(f"發送圖片: {img_url}")
-                                await update.message.reply_photo(img_url)
-                            return
-                        else:
-                            logging.info("未找到圖片")
-                    else:
-                        logging.info("HTML 內容為空")
-                else:
-                    logging.info(f"Nitter 請求失敗，狀態碼: {response.status_code}")
-                
-                logging.info("未找到任何圖片或影片")
-                await update.message.reply_text('這則貼文中沒有圖片或影片！')
-                    
             except Exception as e:
                 logging.error(f"Playwright 方法失敗: {str(e)}")
-                await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
             finally:
                 # 關閉瀏覽器
                 logging.info("關閉瀏覽器")
                 await browser.close()
+        
+        # 如果 Playwright 方法失敗或未找到圖片，嘗試使用 Nitter
+        if not playwright_success:
+            logging.info("Playwright 方法未找到圖片，嘗試使用 Nitter...")
+            
+            # 提取用戶名和推文 ID
+            username, tweet_id = extract_tweet_info(tweet_url)
+            logging.info(f"從 URL 提取到用戶名: {username}, 推文 ID: {tweet_id}")
+            
+            # 構建 Nitter URL
+            nitter_url = f"https://nitter.net/{username}/status/{tweet_id}"
+            logging.info(f"轉換為 Nitter URL: {nitter_url}")
+            
+            # 發送請求
+            headers = get_random_headers()
+            logging.info(f"使用請求頭: {headers['User-Agent']}")
+            response = requests.get(nitter_url, headers=headers, timeout=20)
+            
+            # 記錄狀態碼和 HTML 內容
+            logging.info(f"Nitter 請求狀態碼: {response.status_code}")
+            if response.status_code == 200:
+                html_content = response.text
+                logging.info(f"HTML 內容是否為空: {not bool(html_content)}")
+                logging.info(f"HTML 內容長度: {len(html_content)} 字符")
+                
+                if html_content:
+                    # 解析頁面
+                    soup = BeautifulSoup(html_content, "html.parser")
+                    
+                    # 查找圖片容器
+                    image_containers = []
+                    
+                    # 嘗試不同的容器
+                    containers = soup.find_all("div", class_=["attachments", "gallery-row", "tweet-content", "tweet-body", "media-container", "attachment", "media"])
+                    if containers:
+                        logging.info(f"找到 {len(containers)} 個圖片容器")
+                        image_containers.extend(containers)
+                    
+                    # 如果沒有找到容器，使用整個頁面
+                    if not image_containers:
+                        logging.info("未找到圖片容器，使用整個頁面")
+                        image_containers = [soup]
+                    
+                    # 提取圖片 URL
+                    images = []
+                    for container in image_containers:
+                        # 嘗試不同的圖片選擇器
+                        img_elements = container.find_all("img", class_=["attachment image", "tweet-img", "media-image"])
+                        if not img_elements:
+                            img_elements = container.find_all("img", attrs={"alt": "Image"})
+                        if not img_elements:
+                            img_elements = container.find_all("img")
+                        
+                        logging.info(f"找到 {len(img_elements)} 個圖片元素")
+                        
+                        for img in img_elements:
+                            if 'src' in img.attrs:
+                                img_url = img['src']
+                                if img_url.startswith('//'):
+                                    img_url = 'https:' + img_url
+                                elif img_url.startswith('/'):
+                                    img_url = f"https://nitter.net{img_url}"
+                                
+                                # 轉換為原圖 URL
+                                if "/pic/" in img_url:
+                                    original_url = img_url.replace("/pic/", "/img/")
+                                    if "?" in original_url:
+                                        original_url = original_url.split("?")[0]
+                                    if "/orig/" not in original_url and "/media/" in original_url:
+                                        original_url = original_url.replace("/media/", "/orig/media/")
+                                    images.append(original_url)
+                                    logging.info(f"轉換圖片 URL: {img_url} -> {original_url}")
+                                else:
+                                    images.append(img_url)
+                                    logging.info(f"使用原始圖片 URL: {img_url}")
+                    
+                    if images:
+                        logging.info(f"成功找到 {len(images)} 張圖片")
+                        for img_url in images:
+                            logging.info(f"發送圖片: {img_url}")
+                            await update.message.reply_photo(img_url)
+                        return
+                    else:
+                        logging.info("未找到圖片")
+                else:
+                    logging.info("HTML 內容為空")
+            else:
+                logging.info(f"Nitter 請求失敗，狀態碼: {response.status_code}")
+            
+            logging.info("未找到任何圖片或影片")
+            await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     
     except Exception as e:
         logging.error(f"處理貼文時發生錯誤: {str(e)}")
