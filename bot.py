@@ -237,10 +237,72 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception as e:
                         logger.error(f"Error with API extraction: {str(e)}")
                 
+                # 方法 5: 使用 Nitter 提取
+                if not media_found:
+                    try:
+                        logger.info("Trying Nitter extraction method...")
+                        # 使用 Nitter 提取媒體
+                        nitter_url = f"https://nitter.net/i/status/{tweet_id}"
+                        await page.goto(nitter_url, timeout=30000)
+                        await page.wait_for_load_state('networkidle', timeout=30000)
+                        
+                        # 獲取頁面源碼
+                        nitter_content = await page.content()
+                        nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
+                        
+                        # 查找所有圖片
+                        nitter_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
+                        if nitter_images:
+                            logger.info(f"Found {len(nitter_images)} images with Nitter")
+                            for img in nitter_images:
+                                img_url = img['src']
+                                if img_url.startswith('//'):
+                                    img_url = 'https:' + img_url
+                                logger.info(f"Sending image from Nitter: {img_url}")
+                                await update.message.reply_photo(img_url)
+                                media_found = True
+                    except Exception as e:
+                        logger.error(f"Error with Nitter extraction: {str(e)}")
+                
+                # 方法 6: 使用 Twitter 嵌入 API
+                if not media_found:
+                    try:
+                        logger.info("Trying Twitter embed API method...")
+                        # 使用 Twitter 嵌入 API 提取媒體
+                        embed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}"
+                        response = await page.goto(embed_url)
+                        if response.status == 200:
+                            data = await response.json()
+                            if 'html' in data:
+                                embed_html = data['html']
+                                embed_soup = BeautifulSoup(embed_html, 'html.parser')
+                                embed_images = embed_soup.find_all('img')
+                                if embed_images:
+                                    logger.info(f"Found {len(embed_images)} images with embed API")
+                                    for img in embed_images:
+                                        img_url = img['src']
+                                        logger.info(f"Sending image from embed API: {img_url}")
+                                        await update.message.reply_photo(img_url)
+                                        media_found = True
+                    except Exception as e:
+                        logger.error(f"Error with embed API extraction: {str(e)}")
+                
                 # 如果還是沒有找到媒體
                 if not media_found:
                     logger.info("No media found in tweet")
-                    await update.message.reply_text('這則貼文中沒有圖片或影片！')
+                    # 檢查推文是否真的沒有媒體
+                    try:
+                        # 檢查是否有媒體容器
+                        media_container = await page.query_selector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="cardWrapper"]')
+                        if media_container:
+                            logger.info("Media container found but extraction failed")
+                            await update.message.reply_text('無法提取這則貼文中的媒體，可能是因為 Twitter 的限制。')
+                        else:
+                            logger.info("No media container found, tweet has no media")
+                            await update.message.reply_text('這則貼文中沒有圖片或影片！')
+                    except Exception as e:
+                        logger.error(f"Error checking media container: {str(e)}")
+                        await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     
             except Exception as e:
                 logger.error(f"Error fetching tweet: {str(e)}")
