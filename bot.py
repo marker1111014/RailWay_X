@@ -55,6 +55,15 @@ TWITTER_API_ENDPOINTS = [
     "https://api.twitter.com/2/tweets/{tweet_id}?expansions=attachments.media_keys&media.fields=url,preview_image_url,type"
 ]
 
+# Twitter GraphQL API 端點
+TWITTER_GRAPHQL_ENDPOINTS = [
+    "https://twitter.com/i/api/graphql/oMVVrI5kt3kOpyHHTTKf5Q/TweetDetail?variables=%7B%22focalTweetId%22%3A%22{tweet_id}%22%2C%22with_rux_injections%22%3Afalse%2C%22includePromotedContent%22%3Afalse%2C%22withCommunity%22%3Atrue%2C%22withQuickPromoteEligibilityTweetFields%22%3Afalse%2C%22withBirdwatchNotes%22%3Afalse%2C%22withVoice%22%3Atrue%2C%22withV2Timeline%22%3Atrue%7D",
+    "https://twitter.com/i/api/graphql/0hWvDhmW8YOQ2fq22wF0Mw/TweetResultByRestId?variables=%7B%22tweetId%22%3A%22{tweet_id}%22%2C%22withCommunity%22%3Atrue%2C%22includePromotedContent%22%3Afalse%7D"
+]
+
+# 隨機生成的 Twitter 客戶端 ID
+TWITTER_CLIENT_ID = "".join(random.choices("0123456789abcdef", k=32))
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
     await update.message.reply_text(
@@ -313,6 +322,128 @@ async def extract_images_with_embed_api(tweet_id, update):
     
     return media_found
 
+async def extract_images_with_graphql_api(tweet_id, update):
+    """使用 Twitter GraphQL API 提取圖片"""
+    media_found = False
+    
+    # 設置請求頭
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Referer': f'https://twitter.com/i/status/{tweet_id}',
+        'Origin': 'https://twitter.com',
+        'x-twitter-client-language': 'en',
+        'x-twitter-active-user': 'yes',
+        'x-csrf-token': TWITTER_CLIENT_ID,
+        'x-twitter-auth-type': 'OAuth2Session',
+        'x-twitter-client-version': 'web',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'te': 'trailers'
+    }
+    
+    # 遍歷所有 Twitter GraphQL API 端點
+    for api_endpoint in TWITTER_GRAPHQL_ENDPOINTS:
+        if media_found:
+            break
+            
+        try:
+            api_url = api_endpoint.format(tweet_id=tweet_id)
+            logger.info(f"Trying Twitter GraphQL API endpoint: {api_url}")
+            
+            # 發送請求
+            async with httpx.AsyncClient() as client:
+                response = await client.get(api_url, headers=headers, timeout=10)
+                
+                # 檢查響應狀態
+                if response.status_code != 200:
+                    logger.warning(f"Failed to access Twitter GraphQL API endpoint {api_url}, status code: {response.status_code}")
+                    continue
+                
+                # 解析 JSON 響應
+                try:
+                    data = response.json()
+                    logger.info(f"Twitter GraphQL API response: {json.dumps(data)[:200]}...")
+                    
+                    # 方法 1: TweetDetail API
+                    if 'data' in data and 'threaded_conversation_with_injections_v2' in data['data']:
+                        logger.info("Found 'threaded_conversation_with_injections_v2' in GraphQL response")
+                        instructions = data['data']['threaded_conversation_with_injections_v2']['instructions']
+                        
+                        for instruction in instructions:
+                            if 'entries' in instruction:
+                                for entry in instruction['entries']:
+                                    if 'content' in entry and 'itemContent' in entry['content']:
+                                        tweet_results = entry['content']['itemContent']['tweet_results']
+                                        if 'result' in tweet_results:
+                                            result = tweet_results['result']
+                                            
+                                            # 檢查是否有媒體
+                                            if 'legacy' in result and 'extended_entities' in result['legacy']:
+                                                media = result['legacy']['extended_entities']['media']
+                                                for item in media:
+                                                    if item['type'] == 'photo':
+                                                        img_url = item['media_url_https']
+                                                        # 移除圖片大小限制
+                                                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                                        logger.info(f"Sending image from GraphQL API: {img_url}")
+                                                        await update.message.reply_photo(img_url)
+                                                        media_found = True
+                                                    elif item['type'] == 'video':
+                                                        video_info = item['video_info']
+                                                        variants = video_info['variants']
+                                                        for variant in variants:
+                                                            if variant['content_type'] == 'image/jpeg':
+                                                                preview_url = variant['url']
+                                                                logger.info(f"Sending video preview from GraphQL API: {preview_url}")
+                                                                await update.message.reply_photo(preview_url)
+                                                                media_found = True
+                    
+                    # 方法 2: TweetResultByRestId API
+                    elif 'data' in data and 'tweet_result' in data['data']:
+                        logger.info("Found 'tweet_result' in GraphQL response")
+                        result = data['data']['tweet_result']
+                        
+                        if 'legacy' in result and 'extended_entities' in result['legacy']:
+                            media = result['legacy']['extended_entities']['media']
+                            for item in media:
+                                if item['type'] == 'photo':
+                                    img_url = item['media_url_https']
+                                    # 移除圖片大小限制
+                                    img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                    logger.info(f"Sending image from GraphQL API: {img_url}")
+                                    await update.message.reply_photo(img_url)
+                                    media_found = True
+                                elif item['type'] == 'video':
+                                    video_info = item['video_info']
+                                    variants = video_info['variants']
+                                    for variant in variants:
+                                        if variant['content_type'] == 'image/jpeg':
+                                            preview_url = variant['url']
+                                            logger.info(f"Sending video preview from GraphQL API: {preview_url}")
+                                            await update.message.reply_photo(preview_url)
+                                            media_found = True
+                    
+                    # 如果成功提取了媒體，跳出循環
+                    if media_found:
+                        logger.info(f"Successfully extracted media from Twitter GraphQL API endpoint: {api_url}")
+                        break
+                    else:
+                        logger.info(f"No media found in Twitter GraphQL API response from: {api_url}")
+                
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON response from Twitter GraphQL API endpoint: {api_url}")
+                    continue
+                
+        except Exception as e:
+            logger.error(f"Error with Twitter GraphQL API endpoint {api_url}: {str(e)}")
+            continue
+    
+    return media_found
+
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
     try:
@@ -331,21 +462,26 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         media_found = False
         
-        # 方法 1: 使用 Twitter API 提取媒體
-        logger.info("Trying to extract media using Twitter API...")
-        media_found = await extract_images_with_twitter_api(tweet_id, update)
+        # 方法 1: 使用 Twitter GraphQL API 提取媒體
+        logger.info("Trying to extract media using Twitter GraphQL API...")
+        media_found = await extract_images_with_graphql_api(tweet_id, update)
         
-        # 方法 2: 使用 Twitter 嵌入 API 提取媒體
+        # 方法 2: 使用 Twitter API 提取媒體
+        if not media_found:
+            logger.info("Twitter GraphQL API extraction failed, trying Twitter API...")
+            media_found = await extract_images_with_twitter_api(tweet_id, update)
+        
+        # 方法 3: 使用 Twitter 嵌入 API 提取媒體
         if not media_found:
             logger.info("Twitter API extraction failed, trying Twitter embed API...")
             media_found = await extract_images_with_embed_api(tweet_id, update)
         
-        # 方法 3: 使用 requests 從 Nitter 提取媒體
+        # 方法 4: 使用 requests 從 Nitter 提取媒體
         if not media_found:
             logger.info("Twitter embed API extraction failed, trying Nitter with requests...")
             media_found = await extract_images_with_requests(tweet_id, update)
         
-        # 方法 4: 使用 Playwright 從 Twitter 直接提取
+        # 方法 5: 使用 Playwright 從 Twitter 直接提取
         if not media_found:
             logger.info("Nitter extraction failed, trying Twitter directly with Playwright...")
             
