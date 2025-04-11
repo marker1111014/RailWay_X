@@ -2,10 +2,10 @@ import os
 import re
 import logging
 import time
+import requests
+from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import tweepy
-from tweepy.errors import TooManyRequests
 from dotenv import load_dotenv
 
 # 載入環境變數
@@ -19,14 +19,20 @@ logging.basicConfig(
 
 # 獲取環境變數
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TWITTER_BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN')
 
-# 初始化 Twitter API 客戶端
-client = tweepy.Client(bearer_token=TWITTER_BEARER_TOKEN)
+# Nitter 實例列表
+NITTER_INSTANCES = [
+    'https://nitter.net',
+    'https://nitter.cz',
+    'https://nitter.unixfox.eu',
+    'https://nitter.fdn.fr',
+    'https://nitter.1d4.us',
+]
 
-# 重試設置
-MAX_RETRIES = 3
-RETRY_DELAY = 60  # 秒
+def get_random_nitter_instance():
+    """獲取隨機的 Nitter 實例"""
+    import random
+    return random.choice(NITTER_INSTANCES)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
@@ -48,48 +54,51 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 添加重試機制
-        for attempt in range(MAX_RETRIES):
+        # 嘗試不同的 Nitter 實例
+        for instance in NITTER_INSTANCES:
             try:
-                # 獲取貼文內容
-                tweet = client.get_tweet(tweet_id, expansions=['attachments.media_keys'],
-                                       media_fields=['url', 'preview_image_url'])
-                break
-            except TooManyRequests:
-                if attempt < MAX_RETRIES - 1:
-                    wait_time = RETRY_DELAY * (attempt + 1)
-                    await update.message.reply_text(
-                        f'Twitter API 請求限制，等待 {wait_time} 秒後重試...'
-                    )
-                    time.sleep(wait_time)
-                else:
-                    await update.message.reply_text(
-                        '抱歉，Twitter API 請求限制，請稍後再試。'
-                    )
-                    return
+                # 構建 Nitter URL
+                nitter_url = f"{instance}/{tweet_id}"
+                
+                # 獲取頁面內容
+                response = requests.get(nitter_url, timeout=10)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # 查找所有圖片
+                    images = soup.find_all('img', class_='tweet-image')
+                    if images:
+                        for img in images:
+                            if img.get('src'):
+                                # 轉換相對 URL 為絕對 URL
+                                img_url = img['src']
+                                if img_url.startswith('/'):
+                                    img_url = instance + img_url
+                                await update.message.reply_photo(img_url)
+                        return
+                    
+                    # 如果沒有找到圖片，檢查是否有影片預覽圖
+                    video_preview = soup.find('img', class_='tweet-video-preview')
+                    if video_preview and video_preview.get('src'):
+                        preview_url = video_preview['src']
+                        if preview_url.startswith('/'):
+                            preview_url = instance + preview_url
+                        await update.message.reply_photo(preview_url)
+                        return
+                    
+                    # 如果這個實例沒有找到圖片，繼續嘗試下一個
+                    continue
+                    
+            except Exception as e:
+                logging.error(f"Error with instance {instance}: {str(e)}")
+                continue
         
-        if not hasattr(tweet, 'includes') or 'media' not in tweet.includes:
-            await update.message.reply_text('這則貼文中沒有圖片！')
-            return
-            
-        # 發送圖片
-        for media in tweet.includes['media']:
-            if media.type == 'photo':
-                image_url = media.url
-                await update.message.reply_photo(image_url)
-            elif media.type == 'video':
-                preview_url = media.preview_image_url
-                if preview_url:
-                    await update.message.reply_photo(preview_url)
+        # 如果所有實例都失敗了
+        await update.message.reply_text('無法找到圖片，請確認貼文是否包含圖片或稍後再試。')
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
-        if isinstance(e, TooManyRequests):
-            await update.message.reply_text(
-                '抱歉，Twitter API 請求限制，請稍後再試。'
-            )
-        else:
-            await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
+        await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
 
 def main():
     """主程序"""
