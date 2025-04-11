@@ -120,12 +120,12 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # 檢查是否有錯誤訊息
                 if "Something went wrong" in page_content:
                     logger.error("Twitter error")
-                    await update.message.reply_text('Twitter 出現錯誤，請稍後再試。')
-                    return
+                    # 不要立即返回，繼續嘗試提取媒體
+                    logger.info("Continuing despite Twitter error message")
                 
                 # 等待更長時間以確保動態內容加載
                 logger.info("Waiting for dynamic content...")
-                await asyncio.sleep(10)
+                await asyncio.sleep(15)  # 增加等待時間
                 
                 # 嘗試使用多種方法提取媒體
                 media_found = False
@@ -217,6 +217,25 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 media_found = True
                     except Exception as e:
                         logger.error(f"Error with JavaScript execution: {str(e)}")
+                
+                # 方法 4: 使用 API 提取
+                if not media_found:
+                    try:
+                        logger.info("Trying API extraction method...")
+                        # 使用 Twitter API 提取媒體
+                        api_url = f"https://api.twitter.com/1.1/videos/tweet/config/{tweet_id}.json"
+                        response = await page.goto(api_url)
+                        if response.status == 200:
+                            data = await response.json()
+                            if 'variants' in data:
+                                for variant in data['variants']:
+                                    if variant['content_type'] == 'image/jpeg':
+                                        img_url = variant['url']
+                                        logger.info(f"Sending image from API: {img_url}")
+                                        await update.message.reply_photo(img_url)
+                                        media_found = True
+                    except Exception as e:
+                        logger.error(f"Error with API extraction: {str(e)}")
                 
                 # 如果還是沒有找到媒體
                 if not media_found:
