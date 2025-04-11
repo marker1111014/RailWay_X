@@ -758,6 +758,26 @@ async def extract_images_from_nitter(tweet_id: str, update: Update) -> bool:
         f"https://nitter.net/{username}/status/{tweet_id}/photo/1" if username else f"https://nitter.net/i/status/{tweet_id}/photo/1"
     ]
     
+    # 設置請求頭 - 使用更新的 Chrome User-Agent
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0',
+        'Referer': 'https://nitter.net/',
+        'DNT': '1',
+        'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="135", "Chromium";v="135"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1'
+    }
+    
     for nitter_url in nitter_urls:
         if media_found:
             break
@@ -765,29 +785,33 @@ async def extract_images_from_nitter(tweet_id: str, update: Update) -> bool:
         try:
             logger.info(f"Trying Nitter URL: {nitter_url}")
             
-            # 設置請求頭 - 模擬瀏覽器行為
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'max-age=0',
-                'Referer': 'https://nitter.net/',
-                'DNT': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1'
-            }
+            # 發送請求 - 增加超時時間和重試機制
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    logger.info(f"Sending request to: {nitter_url} (attempt {retry_count + 1})")
+                    response = requests.get(nitter_url, headers=headers, timeout=30)
+                    
+                    # 檢查響應狀態
+                    if response.status_code == 200:
+                        break
+                    elif response.status_code == 429:  # Too Many Requests
+                        logger.warning("Rate limited by Nitter, waiting before retry...")
+                        await asyncio.sleep(5)  # 等待 5 秒後重試
+                    else:
+                        logger.warning(f"Failed to access Nitter, status code: {response.status_code}")
+                    
+                    retry_count += 1
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Request error: {str(e)}")
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        await asyncio.sleep(2)  # 等待 2 秒後重試
+                    continue
             
-            # 發送請求 - 增加超時時間
-            logger.info(f"Sending request to: {nitter_url}")
-            response = requests.get(nitter_url, headers=headers, timeout=20)
-            
-            # 檢查響應狀態
-            if response.status_code != 200:
-                logger.warning(f"Failed to access Nitter, status code: {response.status_code}")
+            if retry_count == max_retries:
+                logger.error("Max retries reached for Nitter request")
                 continue
             
             # 獲取頁面內容
