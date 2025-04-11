@@ -4,6 +4,7 @@ import logging
 import json
 import time
 import requests
+import subprocess
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -80,11 +81,51 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tweet_id = tweet_id.group(1)
         
         # 初始化 WebDriver
-        driver_path = ChromeDriverManager().install()
-        # 確保 chromedriver 有執行權限
-        os.chmod(driver_path, 0o755)
-        service = Service(driver_path)
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        try:
+            # 使用 webdriver_manager 獲取 ChromeDriver 路徑
+            driver_path = ChromeDriverManager().install()
+            
+            # 找到實際的 chromedriver 可執行文件
+            chromedriver_dir = os.path.dirname(driver_path)
+            chromedriver_executable = None
+            
+            # 檢查目錄中的所有文件
+            for file in os.listdir(chromedriver_dir):
+                if file.startswith('chromedriver'):
+                    chromedriver_executable = os.path.join(chromedriver_dir, file)
+                    break
+            
+            if not chromedriver_executable:
+                # 如果找不到，嘗試在子目錄中查找
+                for root, dirs, files in os.walk(chromedriver_dir):
+                    for file in files:
+                        if file.startswith('chromedriver'):
+                            chromedriver_executable = os.path.join(root, file)
+                            break
+                    if chromedriver_executable:
+                        break
+            
+            if not chromedriver_executable:
+                raise Exception("找不到 chromedriver 可執行文件")
+            
+            # 設置執行權限
+            os.chmod(chromedriver_executable, 0o755)
+            
+            # 創建 Service 對象
+            service = Service(executable_path=chromedriver_executable)
+            
+            # 初始化 WebDriver
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+        except Exception as e:
+            logging.error(f"ChromeDriver 初始化錯誤: {str(e)}")
+            # 嘗試使用系統安裝的 ChromeDriver
+            try:
+                driver = webdriver.Chrome(options=chrome_options)
+            except Exception as e2:
+                logging.error(f"系統 ChromeDriver 初始化錯誤: {str(e2)}")
+                await update.message.reply_text('初始化瀏覽器時發生錯誤，請稍後再試。')
+                return
         
         try:
             # 訪問貼文頁面
