@@ -2,11 +2,19 @@ import os
 import re
 import logging
 import json
+import time
 import requests
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 # 載入環境變數
 load_dotenv()
@@ -19,6 +27,38 @@ logging.basicConfig(
 
 # 獲取環境變數
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+
+# 設置 Chrome 選項
+chrome_options = Options()
+chrome_options.add_argument('--headless')  # 無頭模式
+chrome_options.add_argument('--no-sandbox')
+chrome_options.add_argument('--disable-dev-shm-usage')
+chrome_options.add_argument('--disable-gpu')
+chrome_options.add_argument('--disable-extensions')
+chrome_options.add_argument('--disable-infobars')
+chrome_options.add_argument('--disable-notifications')
+chrome_options.add_argument('--disable-popup-blocking')
+chrome_options.add_argument('--disable-web-security')
+chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+chrome_options.add_argument('--window-size=1920,1080')
+chrome_options.add_argument('--start-maximized')
+chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+chrome_options.add_argument('--disable-site-isolation-trials')
+chrome_options.add_argument('--disable-web-security')
+chrome_options.add_argument('--allow-running-insecure-content')
+chrome_options.add_argument('--disable-setuid-sandbox')
+chrome_options.add_argument('--disable-dev-shm-usage')
+chrome_options.add_argument('--disable-accelerated-2d-canvas')
+chrome_options.add_argument('--no-first-run')
+chrome_options.add_argument('--no-zygote')
+chrome_options.add_argument('--single-process')
+chrome_options.add_argument('--disable-extensions')
+chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+chrome_options.add_experimental_option('useAutomationExtension', False)
+
+# 設置 Chrome 二進制文件路徑
+chrome_options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/google-chrome')
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
@@ -40,69 +80,66 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 使用網頁抓取
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # 初始化 WebDriver
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
         
         try:
-            # 先嘗試獲取 oEmbed 數據
-            oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}"
-            response = requests.get(oembed_url, headers=headers, timeout=10)
+            # 訪問貼文頁面
+            driver.get(f"https://twitter.com/i/status/{tweet_id}")
             
-            if response.status_code == 200:
-                data = response.json()
-                html_content = data.get('html', '')
+            # 等待頁面加載
+            time.sleep(5)  # 等待動態內容加載
+            
+            # 獲取頁面源碼
+            page_source = driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
+            
+            # 查找所有圖片
+            images = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/media/')})
+            if images:
+                for img in images:
+                    img_url = img['src']
+                    # 移除圖片大小限制
+                    img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                    await update.message.reply_photo(img_url)
+                return
+            
+            # 如果沒有找到圖片，檢查是否有影片預覽圖
+            video_previews = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/tweet_video_thumb/')})
+            if video_previews:
+                for preview in video_previews:
+                    await update.message.reply_photo(preview['src'])
+                return
+            
+            # 如果還是沒有找到，嘗試使用 JavaScript 獲取
+            try:
+                # 等待媒體元素加載
+                media_elements = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, '[data-testid="tweetPhoto"], [data-testid="videoPlayer"]'))
+                )
                 
-                # 從 HTML 中提取圖片 URL
-                img_urls = re.findall(r'https://pbs\.twimg\.com/media/[^"\']+', html_content)
-                
-                if img_urls:
-                    # 轉換圖片 URL 為高質量版本
-                    for img_url in img_urls:
-                        # 移除圖片大小限制
-                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
-                        await update.message.reply_photo(img_url)
-                    return
-                
-                # 如果沒有找到圖片，檢查是否有影片
-                if 'video' in html_content.lower():
-                    # 提取影片預覽圖
-                    preview_urls = re.findall(r'https://pbs\.twimg\.com/tweet_video_thumb/[^"\']+', html_content)
-                    if preview_urls:
-                        for preview_url in preview_urls:
+                for element in media_elements:
+                    if element.get_attribute('data-testid') == 'tweetPhoto':
+                        img_url = element.find_element(By.TAG_NAME, 'img').get_attribute('src')
+                        if img_url:
+                            img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                            await update.message.reply_photo(img_url)
+                    elif element.get_attribute('data-testid') == 'videoPlayer':
+                        preview_url = element.find_element(By.TAG_NAME, 'img').get_attribute('src')
+                        if preview_url:
                             await update.message.reply_photo(preview_url)
-                        return
-            
-            # 如果 oEmbed 失敗，嘗試直接抓取網頁
-            tweet_url = f"https://twitter.com/i/status/{tweet_id}"
-            response = requests.get(tweet_url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 查找所有圖片
-                images = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/media/')})
-                if images:
-                    for img in images:
-                        img_url = img['src']
-                        # 移除圖片大小限制
-                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
-                        await update.message.reply_photo(img_url)
-                    return
-                
-                # 如果沒有找到圖片，檢查是否有影片預覽圖
-                video_previews = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/tweet_video_thumb/')})
-                if video_previews:
-                    for preview in video_previews:
-                        await update.message.reply_photo(preview['src'])
-                    return
+                return
+            except Exception as e:
+                logging.error(f"Error with JavaScript extraction: {str(e)}")
             
             await update.message.reply_text('這則貼文中沒有圖片或影片！')
                 
         except Exception as e:
             logging.error(f"Error fetching tweet: {str(e)}")
             await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
+        finally:
+            driver.quit()
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
