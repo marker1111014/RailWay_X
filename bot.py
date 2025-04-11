@@ -6,6 +6,7 @@ import time
 import requests
 import subprocess
 import tempfile
+import uuid
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -39,6 +40,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
+    driver = None
+    temp_dir = None
+    
     try:
         # 獲取貼文 ID
         tweet_url = update.message.text
@@ -50,12 +54,13 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 創建臨時用戶數據目錄
-        temp_dir = tempfile.mkdtemp()
+        # 創建唯一的臨時用戶數據目錄
+        temp_dir = os.path.join(tempfile.gettempdir(), f'chrome_{uuid.uuid4().hex}')
+        os.makedirs(temp_dir, exist_ok=True)
         
         # 設置 Chrome 選項
         chrome_options = Options()
-        chrome_options.add_argument('--headless=new')  # 使用新的 headless 模式
+        chrome_options.add_argument('--headless=new')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
@@ -78,8 +83,8 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chrome_options.add_argument('--no-first-run')
         chrome_options.add_argument('--no-zygote')
         chrome_options.add_argument('--single-process')
-        chrome_options.add_argument(f'--user-data-dir={temp_dir}')  # 使用臨時用戶數據目錄
-        chrome_options.add_argument('--remote-debugging-port=9222')  # 添加調試端口
+        chrome_options.add_argument(f'--user-data-dir={temp_dir}')
+        chrome_options.add_argument('--remote-debugging-port=0')  # 使用隨機端口
         chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
         chrome_options.add_experimental_option('useAutomationExtension', False)
 
@@ -187,18 +192,24 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Error fetching tweet: {str(e)}")
             await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
-        finally:
-            driver.quit()
-            # 清理臨時目錄
-            try:
-                import shutil
-                shutil.rmtree(temp_dir)
-            except Exception as e:
-                logging.error(f"Error cleaning up temp directory: {str(e)}")
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
         await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
+    finally:
+        # 確保清理資源
+        if driver:
+            try:
+                driver.quit()
+            except Exception as e:
+                logging.error(f"Error quitting driver: {str(e)}")
+        
+        if temp_dir:
+            try:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logging.error(f"Error cleaning up temp directory: {str(e)}")
 
 def main():
     """主程序"""
