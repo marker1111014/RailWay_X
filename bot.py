@@ -35,7 +35,12 @@ NITTER_INSTANCES = [
     "https://nitter.moomoo.me",
     "https://nitter.weiler.rocks",
     "https://nitter.esmailelbob.xyz",
-    "https://nitter.privacydev.net"
+    "https://nitter.privacydev.net",
+    "https://nitter.poast.org",
+    "https://nitter.mint.lgbt",
+    "https://nitter.foss.wtf",
+    "https://nitter.projectsegfau.lt",
+    "https://nitter.woodland.cafe"
 ]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,14 +118,19 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         # 訪問 Nitter 頁面
                         try:
+                            logger.info(f"Navigating to Nitter URL: {nitter_url}")
                             await page.goto(nitter_url, timeout=30000)
+                            logger.info("Waiting for Nitter page to load...")
                             await page.wait_for_load_state('networkidle', timeout=30000)
+                            logger.info("Nitter page loaded successfully")
                         except TimeoutError:
                             logger.warning(f"Timeout accessing Nitter instance: {nitter_base}")
                             continue
                         
                         # 獲取頁面源碼
+                        logger.info("Getting Nitter page content...")
                         nitter_content = await page.content()
+                        logger.info(f"Nitter page content length: {len(nitter_content)}")
                         
                         # 檢查頁面是否包含錯誤訊息
                         if "Error loading tweet" in nitter_content or "Tweet not found" in nitter_content:
@@ -128,10 +138,28 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             continue
                         
                         # 使用 BeautifulSoup 解析頁面
+                        logger.info("Parsing Nitter page with BeautifulSoup...")
                         nitter_soup = BeautifulSoup(nitter_content, 'html.parser')
                         
                         # 查找所有圖片
+                        logger.info("Searching for images in Nitter page...")
                         nitter_images = nitter_soup.find_all('img', {'class': 'tweet-image'})
+                        logger.info(f"Found {len(nitter_images)} images with class 'tweet-image'")
+                        
+                        # 如果沒有找到帶有 tweet-image 類的圖片，嘗試查找所有圖片
+                        if not nitter_images:
+                            logger.info("No images with class 'tweet-image', trying all images...")
+                            all_images = nitter_soup.find_all('img')
+                            logger.info(f"Found {len(all_images)} total images")
+                            
+                            # 過濾出可能是推文圖片的圖片
+                            for img in all_images:
+                                src = img.get('src', '')
+                                if src and ('pbs.twimg.com/media/' in src or 'pbs.twimg.com/tweet_video_thumb/' in src):
+                                    nitter_images.append(img)
+                            
+                            logger.info(f"Filtered to {len(nitter_images)} potential tweet images")
+                        
                         if nitter_images:
                             logger.info(f"Found {len(nitter_images)} images with Nitter instance: {nitter_base}")
                             for img in nitter_images:
@@ -144,7 +172,10 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             
                             # 如果成功提取了媒體，跳出循環
                             if media_found:
+                                logger.info(f"Successfully extracted media from Nitter instance: {nitter_base}")
                                 break
+                        else:
+                            logger.info(f"No images found on Nitter instance: {nitter_base}")
                                 
                     except Exception as e:
                         logger.error(f"Error with Nitter instance {nitter_base}: {str(e)}")
