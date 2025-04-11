@@ -146,6 +146,16 @@ async def extract_images_from_nitter(tweet_url, update):
         # 創建會話對象，保持 cookie
         session = requests.Session()
         
+        # 設置基本 cookie
+        session.cookies.set('hlsPlayback', 'on', domain='nitter.net')
+        session.cookies.set('infiniteScroll', 'on', domain='nitter.net')
+        session.cookies.set('replaceTwitter', 'nitter.net', domain='nitter.net')
+        session.cookies.set('proxyVideos', 'on', domain='nitter.net')
+        session.cookies.set('hlsPlayback', 'on', domain='nitter.net')
+        session.cookies.set('infiniteScroll', 'on', domain='nitter.net')
+        session.cookies.set('replaceTwitter', 'nitter.net', domain='nitter.net')
+        session.cookies.set('proxyVideos', 'on', domain='nitter.net')
+        
         # 最大重試次數
         max_retries = 3
         
@@ -164,7 +174,7 @@ async def extract_images_from_nitter(tweet_url, update):
                     "Accept-Encoding": "gzip, deflate, br",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
                     "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Cache-Control": "max-age=0",
+                    "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "DNT": "1",
                     "Pragma": "no-cache",
@@ -174,6 +184,9 @@ async def extract_images_from_nitter(tweet_url, update):
                     "Sec-Fetch-User": "?1",
                     "Upgrade-Insecure-Requests": "1",
                     "Referer": "https://www.google.com/",
+                    "sec-ch-ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
                 })
                 
                 # 添加隨機延遲
@@ -186,7 +199,8 @@ async def extract_images_from_nitter(tweet_url, update):
                     user_profile_url,
                     headers=headers,
                     timeout=20,
-                    allow_redirects=True
+                    allow_redirects=True,
+                    verify=False  # 忽略 SSL 驗證
                 )
                 
                 if profile_response.status_code != 200:
@@ -215,7 +229,8 @@ async def extract_images_from_nitter(tweet_url, update):
                     nitter_url,
                     headers=headers,
                     timeout=20,
-                    allow_redirects=True
+                    allow_redirects=True,
+                    verify=False  # 忽略 SSL 驗證
                 )
                 
                 if response.status_code == 429:
