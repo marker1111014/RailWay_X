@@ -5,6 +5,7 @@ import json
 import time
 import requests
 import subprocess
+import tempfile
 from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -29,37 +30,6 @@ logging.basicConfig(
 # 獲取環境變數
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
-# 設置 Chrome 選項
-chrome_options = Options()
-chrome_options.add_argument('--headless')
-chrome_options.add_argument('--no-sandbox')
-chrome_options.add_argument('--disable-dev-shm-usage')
-chrome_options.add_argument('--disable-gpu')
-chrome_options.add_argument('--disable-extensions')
-chrome_options.add_argument('--disable-infobars')
-chrome_options.add_argument('--disable-notifications')
-chrome_options.add_argument('--disable-popup-blocking')
-chrome_options.add_argument('--disable-web-security')
-chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-chrome_options.add_argument('--window-size=1920,1080')
-chrome_options.add_argument('--start-maximized')
-chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-chrome_options.add_argument('--disable-site-isolation-trials')
-chrome_options.add_argument('--disable-web-security')
-chrome_options.add_argument('--allow-running-insecure-content')
-chrome_options.add_argument('--disable-setuid-sandbox')
-chrome_options.add_argument('--disable-dev-shm-usage')
-chrome_options.add_argument('--disable-accelerated-2d-canvas')
-chrome_options.add_argument('--no-first-run')
-chrome_options.add_argument('--no-zygote')
-chrome_options.add_argument('--single-process')
-chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
-chrome_options.add_experimental_option('useAutomationExtension', False)
-
-# 設置 Chrome 二進制文件路徑
-chrome_options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/google-chrome')
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
     await update.message.reply_text(
@@ -79,6 +49,42 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         tweet_id = tweet_id.group(1)
+        
+        # 創建臨時用戶數據目錄
+        temp_dir = tempfile.mkdtemp()
+        
+        # 設置 Chrome 選項
+        chrome_options = Options()
+        chrome_options.add_argument('--headless=new')  # 使用新的 headless 模式
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-infobars')
+        chrome_options.add_argument('--disable-notifications')
+        chrome_options.add_argument('--disable-popup-blocking')
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--start-maximized')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+        chrome_options.add_argument('--disable-site-isolation-trials')
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--allow-running-insecure-content')
+        chrome_options.add_argument('--disable-setuid-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-accelerated-2d-canvas')
+        chrome_options.add_argument('--no-first-run')
+        chrome_options.add_argument('--no-zygote')
+        chrome_options.add_argument('--single-process')
+        chrome_options.add_argument(f'--user-data-dir={temp_dir}')  # 使用臨時用戶數據目錄
+        chrome_options.add_argument('--remote-debugging-port=9222')  # 添加調試端口
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+
+        # 設置 Chrome 二進制文件路徑
+        chrome_options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/google-chrome')
         
         # 初始化 WebDriver
         try:
@@ -183,6 +189,12 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
         finally:
             driver.quit()
+            # 清理臨時目錄
+            try:
+                import shutil
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                logging.error(f"Error cleaning up temp directory: {str(e)}")
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
