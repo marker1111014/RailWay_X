@@ -3,6 +3,7 @@ import re
 import logging
 import json
 import requests
+from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
@@ -39,38 +40,65 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 使用 Twitter API v1.1
-        api_url = f"https://api.twitter.com/1.1/statuses/show/{tweet_id}.json?include_entities=true"
-        
+        # 使用網頁抓取
         headers = {
-            'Authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAAPYXBAAAAAAACLXUNDekMxqa8h%2F40K4moUkGsoc%3DTYfbDKbT3jJPCEVnMYqilB28NHfOPqkca3qaAxGfsyKCs0wRbw'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
         try:
-            response = requests.get(api_url, headers=headers, timeout=10)
+            # 先嘗試獲取 oEmbed 數據
+            oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}"
+            response = requests.get(oembed_url, headers=headers, timeout=10)
+            
             if response.status_code == 200:
                 data = response.json()
+                html_content = data.get('html', '')
                 
-                # 檢查是否有媒體
-                if 'entities' in data and 'media' in data['entities']:
-                    media_items = data['entities']['media']
-                    
-                    for media in media_items:
-                        if media['type'] == 'photo':
-                            # 獲取原始圖片 URL
-                            image_url = media['media_url_https']
-                            if '?format=' in image_url:
-                                image_url = image_url.split('?')[0] + '?format=jpg&name=orig'
-                            await update.message.reply_photo(image_url)
-                        elif media['type'] == 'video':
-                            # 獲取影片預覽圖
-                            if 'media_url_https' in media:
-                                await update.message.reply_photo(media['media_url_https'])
+                # 從 HTML 中提取圖片 URL
+                img_urls = re.findall(r'https://pbs\.twimg\.com/media/[^"\']+', html_content)
+                
+                if img_urls:
+                    # 轉換圖片 URL 為高質量版本
+                    for img_url in img_urls:
+                        # 移除圖片大小限制
+                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                        await update.message.reply_photo(img_url)
                     return
                 
-                await update.message.reply_text('這則貼文中沒有圖片或影片！')
-            else:
-                await update.message.reply_text('無法獲取貼文內容，請稍後再試。')
+                # 如果沒有找到圖片，檢查是否有影片
+                if 'video' in html_content.lower():
+                    # 提取影片預覽圖
+                    preview_urls = re.findall(r'https://pbs\.twimg\.com/tweet_video_thumb/[^"\']+', html_content)
+                    if preview_urls:
+                        for preview_url in preview_urls:
+                            await update.message.reply_photo(preview_url)
+                        return
+            
+            # 如果 oEmbed 失敗，嘗試直接抓取網頁
+            tweet_url = f"https://twitter.com/i/status/{tweet_id}"
+            response = requests.get(tweet_url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 查找所有圖片
+                images = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/media/')})
+                if images:
+                    for img in images:
+                        img_url = img['src']
+                        # 移除圖片大小限制
+                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                        await update.message.reply_photo(img_url)
+                    return
+                
+                # 如果沒有找到圖片，檢查是否有影片預覽圖
+                video_previews = soup.find_all('img', {'src': re.compile(r'https://pbs\.twimg\.com/tweet_video_thumb/')})
+                if video_previews:
+                    for preview in video_previews:
+                        await update.message.reply_photo(preview['src'])
+                    return
+            
+            await update.message.reply_text('這則貼文中沒有圖片或影片！')
                 
         except Exception as e:
             logging.error(f"Error fetching tweet: {str(e)}")
