@@ -28,7 +28,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
     await update.message.reply_text(
         '歡迎使用 X.com 圖片提取機器人！\n'
-        '請直接發送 X.com 的貼文連結給我，我會幫你提取圖片。'
+        '請直接發送 X.com 的貼文連結給我，我會幫你提取圖片。\n\n'
+        '注意：如果貼文包含限制級內容（18+），可能需要登入才能查看。'
     )
 
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,6 +123,34 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.error("Twitter error")
                     # 不要立即返回，繼續嘗試提取媒體
                     logger.info("Continuing despite Twitter error message")
+                
+                # 檢查是否為限制級內容
+                age_restricted = False
+                try:
+                    # 檢查是否有年齡限制提示
+                    age_restriction_texts = [
+                        "This Tweet might contain sensitive content",
+                        "This Tweet contains sensitive content",
+                        "This media may contain sensitive content",
+                        "This media contains sensitive content",
+                        "Age-restricted content",
+                        "Content warning",
+                        "Sensitive content"
+                    ]
+                    
+                    for text in age_restriction_texts:
+                        if text in page_content:
+                            age_restricted = True
+                            logger.info(f"Age restriction detected: {text}")
+                            break
+                    
+                    # 檢查是否有"查看"按鈕（通常用於解鎖限制級內容）
+                    view_button = await page.query_selector('div[role="button"]:has-text("View")')
+                    if view_button:
+                        age_restricted = True
+                        logger.info("Age restriction detected: View button found")
+                except Exception as e:
+                    logger.error(f"Error checking age restriction: {str(e)}")
                 
                 # 等待更長時間以確保動態內容加載
                 logger.info("Waiting for dynamic content...")
@@ -296,13 +325,19 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         media_container = await page.query_selector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="cardWrapper"]')
                         if media_container:
                             logger.info("Media container found but extraction failed")
-                            await update.message.reply_text('無法提取這則貼文中的媒體，可能是因為 Twitter 的限制。')
+                            if age_restricted:
+                                await update.message.reply_text('這則貼文包含限制級內容（18+），需要登入才能查看完整內容。')
+                            else:
+                                await update.message.reply_text('無法提取這則貼文中的媒體，可能是因為 Twitter 的限制。')
                         else:
                             logger.info("No media container found, tweet has no media")
                             await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     except Exception as e:
                         logger.error(f"Error checking media container: {str(e)}")
-                        await update.message.reply_text('這則貼文中沒有圖片或影片！')
+                        if age_restricted:
+                            await update.message.reply_text('這則貼文包含限制級內容（18+），需要登入才能查看完整內容。')
+                        else:
+                            await update.message.reply_text('這則貼文中沒有圖片或影片！')
                     
             except Exception as e:
                 logger.error(f"Error fetching tweet: {str(e)}")
