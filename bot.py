@@ -55,10 +55,32 @@ class NitterScraper:
             logging.error(f"URL 轉換失敗: {str(e)}")
             return None
 
+    def _convert_twitter_to_nitter_url(self, twitter_url):
+        """將 Twitter/X.com URL 轉換為 Nitter URL"""
+        try:
+            pattern = r'(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)'
+            match = re.search(pattern, twitter_url)
+            if match:
+                username, tweet_id = match.groups()
+                return f"{NITTER_INSTANCE}/{username}/status/{tweet_id}"
+            return None
+        except Exception as e:
+            logging.error(f"URL 轉換失敗: {str(e)}")
+            return None
+
     def get_tweet_images(self, tweet_url):
         """從推文中獲取圖片"""
         try:
             logging.info(f"開始從 Nitter 獲取圖片: {tweet_url}")
+            
+            # 將 Twitter/X.com URL 轉換為 Nitter URL
+            nitter_url = self._convert_twitter_to_nitter_url(tweet_url)
+            if not nitter_url:
+                logging.error("無法轉換為 Nitter URL")
+                return None
+                
+            logging.info(f"轉換後的 Nitter URL: {nitter_url}")
+            
             # 提取用戶名和推文 ID
             pattern = r'(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)'
             match = re.search(pattern, tweet_url)
@@ -72,7 +94,6 @@ class NitterScraper:
             # 使用 nitter.net 實例
             try:
                 logging.info(f"使用 Nitter 實例: {NITTER_INSTANCE}")
-                nitter_url = f"{NITTER_INSTANCE}/{username}/status/{tweet_id}"
                 headers = self._get_random_headers()
                 headers["Referer"] = f"{NITTER_INSTANCE}/{username}"
                 
@@ -229,18 +250,6 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 獲取貼文 ID
         tweet_url = update.message.text
         logging.info(f"收到推文連結: {tweet_url}")
-        
-        # 提取用戶名和推文 ID
-        pattern = r'(?:twitter\.com|x\.com)/([^/]+)/status/(\d+)'
-        match = re.search(pattern, tweet_url)
-        
-        if not match:
-            logging.error("無效的推文連結格式")
-            await update.message.reply_text('請發送有效的 X.com 貼文連結！')
-            return
-            
-        username, tweet_id = match.groups()
-        logging.info(f"解析推文信息: 用戶名={username}, 推文ID={tweet_id}")
         
         # 使用 NitterScraper 提取圖片
         logging.info("開始使用 NitterScraper 提取圖片...")
