@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError
 import asyncio
 import random
+import httpx
 
 # 載入環境變數
 load_dotenv()
@@ -46,6 +47,13 @@ NITTER_INSTANCES = [
 
 # 隨機打亂 Nitter 實例列表
 random.shuffle(NITTER_INSTANCES)
+
+# Twitter API 端點
+TWITTER_API_ENDPOINTS = [
+    "https://api.twitter.com/1.1/videos/tweet/config/{tweet_id}.json",
+    "https://api.twitter.com/1.1/statuses/show/{tweet_id}.json",
+    "https://api.twitter.com/2/tweets/{tweet_id}?expansions=attachments.media_keys&media.fields=url,preview_image_url,type"
+]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
@@ -141,6 +149,170 @@ async def extract_images_with_requests(tweet_id, update):
     
     return media_found
 
+async def extract_images_with_twitter_api(tweet_id, update):
+    """使用 Twitter API 提取圖片"""
+    media_found = False
+    
+    # 設置請求頭
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Referer': f'https://twitter.com/i/status/{tweet_id}',
+        'Origin': 'https://twitter.com'
+    }
+    
+    # 遍歷所有 Twitter API 端點
+    for api_endpoint in TWITTER_API_ENDPOINTS:
+        if media_found:
+            break
+            
+        try:
+            api_url = api_endpoint.format(tweet_id=tweet_id)
+            logger.info(f"Trying Twitter API endpoint: {api_url}")
+            
+            # 發送請求
+            async with httpx.AsyncClient() as client:
+                response = await client.get(api_url, headers=headers, timeout=10)
+                
+                # 檢查響應狀態
+                if response.status_code != 200:
+                    logger.warning(f"Failed to access Twitter API endpoint {api_url}, status code: {response.status_code}")
+                    continue
+                
+                # 解析 JSON 響應
+                try:
+                    data = response.json()
+                    logger.info(f"Twitter API response: {json.dumps(data)[:200]}...")
+                    
+                    # 方法 1: 視頻配置 API
+                    if 'variants' in data:
+                        logger.info("Found 'variants' in API response")
+                        for variant in data['variants']:
+                            if variant.get('content_type') == 'image/jpeg':
+                                img_url = variant.get('url')
+                                if img_url:
+                                    logger.info(f"Sending image from Twitter API: {img_url}")
+                                    await update.message.reply_photo(img_url)
+                                    media_found = True
+                    
+                    # 方法 2: 推文狀態 API
+                    elif 'extended_entities' in data and 'media' in data['extended_entities']:
+                        logger.info("Found 'extended_entities.media' in API response")
+                        for media in data['extended_entities']['media']:
+                            if media.get('type') == 'photo':
+                                img_url = media.get('media_url_https')
+                                if img_url:
+                                    # 移除圖片大小限制
+                                    img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                                    logger.info(f"Sending image from Twitter API: {img_url}")
+                                    await update.message.reply_photo(img_url)
+                                    media_found = True
+                            elif media.get('type') == 'video':
+                                video_info = media.get('video_info', {})
+                                variants = video_info.get('variants', [])
+                                for variant in variants:
+                                    if variant.get('content_type') == 'image/jpeg':
+                                        preview_url = variant.get('url')
+                                        if preview_url:
+                                            logger.info(f"Sending video preview from Twitter API: {preview_url}")
+                                            await update.message.reply_photo(preview_url)
+                                            media_found = True
+                    
+                    # 方法 3: Twitter API v2
+                    elif 'includes' in data and 'media' in data['includes']:
+                        logger.info("Found 'includes.media' in API response (Twitter API v2)")
+                        for media in data['includes']['media']:
+                            if media.get('type') == 'photo':
+                                img_url = media.get('url')
+                                if img_url:
+                                    logger.info(f"Sending image from Twitter API v2: {img_url}")
+                                    await update.message.reply_photo(img_url)
+                                    media_found = True
+                            elif media.get('type') == 'video':
+                                preview_url = media.get('preview_image_url')
+                                if preview_url:
+                                    logger.info(f"Sending video preview from Twitter API v2: {preview_url}")
+                                    await update.message.reply_photo(preview_url)
+                                    media_found = True
+                    
+                    # 如果成功提取了媒體，跳出循環
+                    if media_found:
+                        logger.info(f"Successfully extracted media from Twitter API endpoint: {api_url}")
+                        break
+                    else:
+                        logger.info(f"No media found in Twitter API response from: {api_url}")
+                
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON response from Twitter API endpoint: {api_url}")
+                    continue
+                
+        except Exception as e:
+            logger.error(f"Error with Twitter API endpoint {api_url}: {str(e)}")
+            continue
+    
+    return media_found
+
+async def extract_images_with_embed_api(tweet_id, update):
+    """使用 Twitter 嵌入 API 提取圖片"""
+    media_found = False
+    
+    try:
+        embed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}"
+        logger.info(f"Trying Twitter embed API: {embed_url}")
+        
+        # 設置請求頭
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Referer': f'https://twitter.com/i/status/{tweet_id}',
+            'Origin': 'https://twitter.com'
+        }
+        
+        # 發送請求
+        async with httpx.AsyncClient() as client:
+            response = await client.get(embed_url, headers=headers, timeout=10)
+            
+            # 檢查響應狀態
+            if response.status_code != 200:
+                logger.warning(f"Failed to access Twitter embed API, status code: {response.status_code}")
+                return False
+            
+            # 解析 JSON 響應
+            try:
+                data = response.json()
+                logger.info(f"Twitter embed API response: {json.dumps(data)[:200]}...")
+                
+                if 'html' in data:
+                    embed_html = data['html']
+                    embed_soup = BeautifulSoup(embed_html, 'html.parser')
+                    embed_images = embed_soup.find_all('img')
+                    
+                    if embed_images:
+                        logger.info(f"Found {len(embed_images)} images with embed API")
+                        for img in embed_images:
+                            img_url = img['src']
+                            logger.info(f"Sending image from embed API: {img_url}")
+                            await update.message.reply_photo(img_url)
+                            media_found = True
+                    else:
+                        logger.info("No images found in embed API response")
+                else:
+                    logger.info("No 'html' field in embed API response")
+            
+            except json.JSONDecodeError:
+                logger.error("Failed to parse JSON response from Twitter embed API")
+                return False
+    
+    except Exception as e:
+        logger.error(f"Error with Twitter embed API: {str(e)}")
+        return False
+    
+    return media_found
+
 async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """從 X.com 貼文中提取圖片"""
     try:
@@ -157,11 +329,23 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tweet_id = tweet_id.group(1)
         logger.info(f"Extracted tweet ID: {tweet_id}")
         
-        # 首先嘗試使用 requests 從 Nitter 提取媒體
-        logger.info("Trying to extract media using requests from Nitter...")
-        media_found = await extract_images_with_requests(tweet_id, update)
+        media_found = False
         
-        # 如果 Nitter 提取失敗，嘗試使用 Playwright 從 Twitter 直接提取
+        # 方法 1: 使用 Twitter API 提取媒體
+        logger.info("Trying to extract media using Twitter API...")
+        media_found = await extract_images_with_twitter_api(tweet_id, update)
+        
+        # 方法 2: 使用 Twitter 嵌入 API 提取媒體
+        if not media_found:
+            logger.info("Twitter API extraction failed, trying Twitter embed API...")
+            media_found = await extract_images_with_embed_api(tweet_id, update)
+        
+        # 方法 3: 使用 requests 從 Nitter 提取媒體
+        if not media_found:
+            logger.info("Twitter embed API extraction failed, trying Nitter with requests...")
+            media_found = await extract_images_with_requests(tweet_id, update)
+        
+        # 方法 4: 使用 Playwright 從 Twitter 直接提取
         if not media_found:
             logger.info("Nitter extraction failed, trying Twitter directly with Playwright...")
             
@@ -335,48 +519,6 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         media_found = True
                             except Exception as e:
                                 logger.error(f"Error with JavaScript execution: {str(e)}")
-                        
-                        # 方法 4: 使用 API 提取
-                        if not media_found:
-                            try:
-                                logger.info("Trying API extraction method...")
-                                # 使用 Twitter API 提取媒體
-                                api_url = f"https://api.twitter.com/1.1/videos/tweet/config/{tweet_id}.json"
-                                response = await page.goto(api_url)
-                                if response.status == 200:
-                                    data = await response.json()
-                                    if 'variants' in data:
-                                        for variant in data['variants']:
-                                            if variant['content_type'] == 'image/jpeg':
-                                                img_url = variant['url']
-                                                logger.info(f"Sending image from API: {img_url}")
-                                                await update.message.reply_photo(img_url)
-                                                media_found = True
-                            except Exception as e:
-                                logger.error(f"Error with API extraction: {str(e)}")
-                        
-                        # 方法 5: 使用 Twitter 嵌入 API
-                        if not media_found:
-                            try:
-                                logger.info("Trying Twitter embed API method...")
-                                # 使用 Twitter 嵌入 API 提取媒體
-                                embed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}"
-                                response = await page.goto(embed_url)
-                                if response.status == 200:
-                                    data = await response.json()
-                                    if 'html' in data:
-                                        embed_html = data['html']
-                                        embed_soup = BeautifulSoup(embed_html, 'html.parser')
-                                        embed_images = embed_soup.find_all('img')
-                                        if embed_images:
-                                            logger.info(f"Found {len(embed_images)} images with embed API")
-                                            for img in embed_images:
-                                                img_url = img['src']
-                                                logger.info(f"Sending image from embed API: {img_url}")
-                                                await update.message.reply_photo(img_url)
-                                                media_found = True
-                            except Exception as e:
-                                logger.error(f"Error with embed API extraction: {str(e)}")
                         
                         # 如果還是沒有找到媒體
                         if not media_found:
