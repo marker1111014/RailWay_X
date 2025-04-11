@@ -7,6 +7,10 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# 禁用 SSL 警告
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # 載入環境變數
 load_dotenv()
@@ -24,9 +28,14 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 NITTER_INSTANCES = [
     'https://nitter.net',
     'https://nitter.cz',
-    'https://nitter.unixfox.eu',
-    'https://nitter.fdn.fr',
-    'https://nitter.1d4.us',
+    'https://nitter.esmailelbob.xyz',
+    'https://nitter.privacydev.net',
+    'https://nitter.poast.org',
+    'https://nitter.mint.lgbt',
+    'https://nitter.foss.wtf',
+    'https://nitter.projectsegfau.lt',
+    'https://nitter.woodland.cafe',
+    'https://nitter.rawbit.ninja',
 ]
 
 def get_random_nitter_instance():
@@ -60,8 +69,8 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # 構建 Nitter URL
                 nitter_url = f"{instance}/{tweet_id}"
                 
-                # 獲取頁面內容
-                response = requests.get(nitter_url, timeout=10)
+                # 獲取頁面內容，禁用 SSL 驗證
+                response = requests.get(nitter_url, timeout=10, verify=False)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, 'html.parser')
                     
