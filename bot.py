@@ -28,14 +28,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
 # Nitter 實例列表
 NITTER_INSTANCES = [
-    "https://nitter.net",
-    "https://nitter.cz",
-    "https://nitter.unixfox.eu",
-    "https://nitter.fdn.fr",
-    "https://nitter.1d4.us",
-    "https://nitter.kavin.rocks",
-    "https://nitter.domain.glass",
-    "https://nitter.moomoo.me"
+    "https://nitter.net"
 ]
 
 # 瀏覽器指紋
@@ -133,11 +126,13 @@ async def extract_images_from_nitter(tweet_url, update):
         # 創建會話對象，保持 cookie
         session = requests.Session()
         
-        # 嘗試多個 Nitter 實例
-        for nitter_instance in NITTER_INSTANCES:
+        # 最大重試次數
+        max_retries = 3
+        
+        for attempt in range(max_retries):
             try:
                 # 首先訪問用戶主頁，模擬真實瀏覽行為
-                user_profile_url = f"{nitter_instance}/{username}"
+                user_profile_url = f"https://nitter.net/{username}"
                 logging.info(f"訪問用戶主頁: {user_profile_url}")
                 
                 # 使用隨機瀏覽器類型
@@ -159,11 +154,15 @@ async def extract_images_from_nitter(tweet_url, update):
                 
                 if profile_response.status_code != 200:
                     logging.warning(f"訪問用戶主頁失敗，狀態碼: {profile_response.status_code}")
-                    continue
+                    if attempt < max_retries - 1:
+                        delay = random.uniform(5, 10)
+                        logging.info(f"等待 {delay:.2f} 秒後重試...")
+                        time.sleep(delay)
+                        continue
+                    return False
                 
                 # 構建 Nitter URL
-                nitter_url = f"{nitter_instance}/{username}/status/{tweet_id}"
-                logging.info(f"嘗試使用 Nitter 實例: {nitter_instance}")
+                nitter_url = f"https://nitter.net/{username}/status/{tweet_id}"
                 logging.info(f"請求 URL: {nitter_url}")
                 
                 # 更新請求頭，添加 Referer
@@ -189,7 +188,12 @@ async def extract_images_from_nitter(tweet_url, update):
                     continue
                 elif response.status_code != 200:
                     logging.error(f"請求失敗，狀態碼: {response.status_code}")
-                    continue
+                    if attempt < max_retries - 1:
+                        delay = random.uniform(5, 10)
+                        logging.info(f"等待 {delay:.2f} 秒後重試...")
+                        time.sleep(delay)
+                        continue
+                    return False
                 
                 # 檢查響應內容
                 html_content = response.text
@@ -198,8 +202,13 @@ async def extract_images_from_nitter(tweet_url, update):
                 logging.info(f"HTML 內容長度: {len(html_content)} 字符")
                 
                 if not html_content:
-                    logging.warning("HTML 內容為空，嘗試下一個 Nitter 實例")
-                    continue
+                    logging.warning("HTML 內容為空")
+                    if attempt < max_retries - 1:
+                        delay = random.uniform(5, 10)
+                        logging.info(f"等待 {delay:.2f} 秒後重試...")
+                        time.sleep(delay)
+                        continue
+                    return False
                 
                 # 解析頁面
                 soup = BeautifulSoup(html_content, "html.parser")
@@ -208,7 +217,12 @@ async def extract_images_from_nitter(tweet_url, update):
                 page_title = soup.title.string if soup.title else ""
                 if "Error" in page_title or "Not Found" in page_title:
                     logging.error(f"頁面標題包含錯誤信息: {page_title}")
-                    continue
+                    if attempt < max_retries - 1:
+                        delay = random.uniform(5, 10)
+                        logging.info(f"等待 {delay:.2f} 秒後重試...")
+                        time.sleep(delay)
+                        continue
+                    return False
                 
                 # 查找圖片容器
                 image_containers = []
@@ -239,7 +253,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if href.startswith('//'):
                                     img_url = 'https:' + href
                                 elif href.startswith('/'):
-                                    img_url = f"{nitter_instance}{href}"
+                                    img_url = f"https://nitter.net{href}"
                                 else:
                                     img_url = href
                                 
@@ -267,7 +281,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if img_url.startswith('//'):
                                     img_url = 'https:' + img_url
                                 elif img_url.startswith('/'):
-                                    img_url = f"{nitter_instance}{img_url}"
+                                    img_url = f"https://nitter.net{img_url}"
                                 
                                 # 轉換為原圖 URL
                                 if "/pic/" in img_url:
@@ -293,7 +307,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if img_url.startswith('//'):
                                     img_url = 'https:' + img_url
                                 elif img_url.startswith('/'):
-                                    img_url = f"{nitter_instance}{img_url}"
+                                    img_url = f"https://nitter.net{img_url}"
                                 
                                 # 轉換為原圖 URL
                                 if "/pic/" in img_url:
@@ -319,7 +333,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if img_url.startswith('//'):
                                     img_url = 'https:' + img_url
                                 elif img_url.startswith('/'):
-                                    img_url = f"{nitter_instance}{img_url}"
+                                    img_url = f"https://nitter.net{img_url}"
                                 
                                 # 轉換為原圖 URL
                                 if "/pic/" in img_url:
@@ -345,7 +359,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if img_url.startswith('//'):
                                     img_url = 'https:' + img_url
                                 elif img_url.startswith('/'):
-                                    img_url = f"{nitter_instance}{img_url}"
+                                    img_url = f"https://nitter.net{img_url}"
                                 
                                 # 轉換為原圖 URL
                                 if "/pic/" in img_url:
@@ -371,7 +385,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if img_url.startswith('//'):
                                     img_url = 'https:' + img_url
                                 elif img_url.startswith('/'):
-                                    img_url = f"{nitter_instance}{img_url}"
+                                    img_url = f"https://nitter.net{img_url}"
                                 
                                 # 轉換為原圖 URL
                                 if "/pic/" in img_url:
@@ -398,7 +412,7 @@ async def extract_images_from_nitter(tweet_url, update):
                                 if href.startswith('//'):
                                     img_url = 'https:' + href
                                 elif href.startswith('/'):
-                                    img_url = f"{nitter_instance}{href}"
+                                    img_url = f"https://nitter.net{href}"
                                 else:
                                     img_url = href
                                 
@@ -426,7 +440,7 @@ async def extract_images_from_nitter(tweet_url, update):
                             if href.startswith('//'):
                                 img_url = 'https:' + href
                             elif href.startswith('/'):
-                                img_url = f"{nitter_instance}{href}"
+                                img_url = f"https://nitter.net{href}"
                             else:
                                 img_url = href
                             
@@ -453,8 +467,13 @@ async def extract_images_from_nitter(tweet_url, update):
                     logging.info("未找到圖片")
                 
             except Exception as e:
-                logging.error(f"Nitter 實例 {nitter_instance} 失敗: {str(e)}")
-                continue
+                logging.error(f"Nitter 實例 {nitter_url} 失敗: {str(e)}")
+                if attempt < max_retries - 1:
+                    delay = random.uniform(5, 10)
+                    logging.info(f"等待 {delay:.2f} 秒後重試...")
+                    time.sleep(delay)
+                    continue
+                return False
         
         logging.info("所有 Nitter 實例都失敗了")
         return False
