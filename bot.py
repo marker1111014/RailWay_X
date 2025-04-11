@@ -13,6 +13,7 @@ import requests
 from fake_useragent import UserAgent
 import json
 import platform
+import urllib.parse
 
 # 載入環境變數
 load_dotenv()
@@ -31,13 +32,23 @@ NITTER_INSTANCES = [
     "https://nitter.net"
 ]
 
+# 免費代理列表 (可以定期更新)
+FREE_PROXIES = [
+    None,  # 不使用代理
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+    "http://51.159.115.233:3128",
+]
+
 # 瀏覽器指紋
 BROWSER_FINGERPRINTS = {
     "chrome": {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "accept_language": "en-US,en;q=0.9",
-        "sec_ch_ua": '"Google Chrome";v="91", "Chromium";v="91", ";Not A Brand";v="99"',
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept_language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "sec_ch_ua": '"Google Chrome";v="120", "Chromium";v="120", "Not-A.Brand";v="99"',
         "sec_ch_ua_mobile": "?0",
         "sec_ch_ua_platform": '"Windows"',
         "upgrade_insecure_requests": "1",
@@ -47,16 +58,32 @@ BROWSER_FINGERPRINTS = {
         "sec_fetch_user": "?1"
     },
     "firefox": {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "accept_language": "en-US,en;q=0.5",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept_language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
         "accept_encoding": "gzip, deflate, br",
         "dnt": "1",
         "connection": "keep-alive",
         "upgrade_insecure_requests": "1",
         "te": "Trailers"
+    },
+    "safari": {
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept_language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "accept_encoding": "gzip, deflate, br",
+        "dnt": "1",
+        "connection": "keep-alive"
     }
 }
+
+# 常見的搜索引擎
+SEARCH_ENGINES = [
+    "https://www.google.com/search?q=",
+    "https://www.bing.com/search?q=",
+    "https://search.yahoo.com/search?p=",
+    "https://duckduckgo.com/?q="
+]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
@@ -70,35 +97,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def get_random_headers(browser_type="chrome"):
     """生成隨機請求頭，模擬真實瀏覽器"""
-    ua = UserAgent()
-    headers = {
-        "User-Agent": ua.random,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Cache-Control": "max-age=0",
-        "Connection": "keep-alive",
-        "DNT": "1",
-        "Pragma": "no-cache",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1",
-        "Referer": "https://www.google.com/",
-    }
+    # 隨機選擇瀏覽器類型
+    if browser_type == "random":
+        browser_type = random.choice(list(BROWSER_FINGERPRINTS.keys()))
     
-    # 添加瀏覽器特定的頭部
-    if browser_type == "chrome":
-        headers.update({
-            "Sec-Ch-Ua": '"Google Chrome";v="120", "Chromium";v="120", "Not-A.Brand";v="99"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-        })
-    elif browser_type == "firefox":
-        headers.update({
-            "TE": "Trailers",
-        })
+    # 使用預定義的瀏覽器指紋
+    headers = BROWSER_FINGERPRINTS[browser_type].copy()
+    
+    # 添加隨機的 User-Agent
+    ua = UserAgent()
+    headers["User-Agent"] = ua.random
+    
+    # 添加隨機的 Referer
+    search_engine = random.choice(SEARCH_ENGINES)
+    search_query = urllib.parse.quote(f"twitter {random.choice(['image', 'photo', 'picture', 'media'])}")
+    headers["Referer"] = f"{search_engine}{search_query}"
+    
+    # 添加隨機的 Cookie
+    headers["Cookie"] = f"cf_clearance={random.randint(1000000000, 9999999999)}; _ga=GA1.1.{random.randint(1000000000, 9999999999)}.{int(time.time())}"
     
     return headers
 
@@ -149,16 +165,26 @@ async def extract_images_from_nitter(tweet_url, update):
         session = requests.Session()
         
         # 最大重試次數
-        max_retries = 3
+        max_retries = 5
         
         for attempt in range(max_retries):
             try:
+                # 隨機選擇代理
+                proxy = random.choice(FREE_PROXIES)
+                proxies = None
+                if proxy:
+                    proxies = {
+                        "http": proxy,
+                        "https": proxy
+                    }
+                    logging.info(f"使用代理: {proxy}")
+                
                 # 首先訪問用戶主頁，模擬真實瀏覽行為
                 user_profile_url = f"https://nitter.net/{username}"
                 logging.info(f"訪問用戶主頁: {user_profile_url}")
                 
                 # 使用隨機瀏覽器類型
-                browser_type = random.choice(["chrome", "firefox"])
+                browser_type = random.choice(["chrome", "firefox", "safari", "random"])
                 headers = get_random_headers(browser_type)
                 
                 # 添加隨機延遲
@@ -171,7 +197,9 @@ async def extract_images_from_nitter(tweet_url, update):
                     user_profile_url,
                     headers=headers,
                     timeout=20,
-                    allow_redirects=True
+                    allow_redirects=True,
+                    proxies=proxies,
+                    verify=False  # 忽略 SSL 驗證
                 )
                 
                 if profile_response.status_code != 200:
@@ -200,7 +228,9 @@ async def extract_images_from_nitter(tweet_url, update):
                     nitter_url,
                     headers=headers,
                     timeout=20,
-                    allow_redirects=True
+                    allow_redirects=True,
+                    proxies=proxies,
+                    verify=False  # 忽略 SSL 驗證
                 )
                 
                 if response.status_code == 429:
