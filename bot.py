@@ -30,7 +30,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 
 # 設置 Chrome 選項
 chrome_options = Options()
-chrome_options.add_argument('--headless')  # 無頭模式
+chrome_options.add_argument('--headless')
 chrome_options.add_argument('--no-sandbox')
 chrome_options.add_argument('--disable-dev-shm-usage')
 chrome_options.add_argument('--disable-gpu')
@@ -53,7 +53,6 @@ chrome_options.add_argument('--disable-accelerated-2d-canvas')
 chrome_options.add_argument('--no-first-run')
 chrome_options.add_argument('--no-zygote')
 chrome_options.add_argument('--single-process')
-chrome_options.add_argument('--disable-extensions')
 chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
 chrome_options.add_experimental_option('useAutomationExtension', False)
 
@@ -81,7 +80,10 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tweet_id = tweet_id.group(1)
         
         # 初始化 WebDriver
-        service = Service(ChromeDriverManager().install())
+        driver_path = ChromeDriverManager().install()
+        # 確保 chromedriver 有執行權限
+        os.chmod(driver_path, 0o755)
+        service = Service(driver_path)
         driver = webdriver.Chrome(service=service, options=chrome_options)
         
         try:
