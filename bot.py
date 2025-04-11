@@ -8,7 +8,8 @@ from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
+import asyncio
 
 # 載入環境變數
 load_dotenv()
@@ -43,10 +44,10 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tweet_id = tweet_id.group(1)
         
         # 使用 Playwright 訪問貼文頁面
-        with sync_playwright() as p:
+        async with async_playwright() as p:
             try:
                 # 啟動瀏覽器
-                browser = p.chromium.launch(
+                browser = await p.chromium.launch(
                     headless=True,
                     args=[
                         '--no-sandbox',
@@ -71,22 +72,22 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 # 創建新頁面
-                page = browser.new_page()
+                page = await browser.new_page()
                 
                 # 設置用戶代理
-                page.set_extra_http_headers({
+                await page.set_extra_http_headers({
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 })
                 
                 # 訪問貼文頁面
-                page.goto(f"https://twitter.com/i/status/{tweet_id}")
+                await page.goto(f"https://twitter.com/i/status/{tweet_id}")
                 
                 # 等待頁面加載
-                page.wait_for_load_state('networkidle')
-                time.sleep(5)  # 額外等待動態內容加載
+                await page.wait_for_load_state('networkidle')
+                await asyncio.sleep(5)  # 額外等待動態內容加載
                 
                 # 獲取頁面源碼
-                page_source = page.content()
+                page_source = await page.content()
                 soup = BeautifulSoup(page_source, 'html.parser')
                 
                 # 查找所有圖片
@@ -109,21 +110,21 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # 如果還是沒有找到，嘗試使用 JavaScript 獲取
                 try:
                     # 等待媒體元素加載
-                    media_elements = page.query_selector_all('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')
+                    media_elements = await page.query_selector_all('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')
                     
                     for element in media_elements:
-                        data_testid = element.get_attribute('data-testid')
+                        data_testid = await element.get_attribute('data-testid')
                         if data_testid == 'tweetPhoto':
-                            img_element = element.query_selector('img')
+                            img_element = await element.query_selector('img')
                             if img_element:
-                                img_url = img_element.get_attribute('src')
+                                img_url = await img_element.get_attribute('src')
                                 if img_url:
                                     img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
                                     await update.message.reply_photo(img_url)
                         elif data_testid == 'videoPlayer':
-                            img_element = element.query_selector('img')
+                            img_element = await element.query_selector('img')
                             if img_element:
-                                preview_url = img_element.get_attribute('src')
+                                preview_url = await img_element.get_attribute('src')
                                 if preview_url:
                                     await update.message.reply_photo(preview_url)
                     return
@@ -137,7 +138,7 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
             finally:
                 # 關閉瀏覽器
-                browser.close()
+                await browser.close()
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
