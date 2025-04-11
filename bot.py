@@ -39,11 +39,11 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 使用 Twitter API v2
-        api_url = f"https://api.twitter.com/2/tweets/{tweet_id}?expansions=attachments.media_keys&media.fields=url,preview_image_url,type"
+        # 使用 Twitter API v1.1
+        api_url = f"https://api.twitter.com/1.1/statuses/show/{tweet_id}.json?include_entities=true"
         
         headers = {
-            'Authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
+            'Authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAAPYXBAAAAAAACLXUNDekMxqa8h%2F40K4moUkGsoc%3DTYfbDKbT3jJPCEVnMYqilB28NHfOPqkca3qaAxGfsyKCs0wRbw'
         }
         
         try:
@@ -52,20 +52,20 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data = response.json()
                 
                 # 檢查是否有媒體
-                if 'includes' in data and 'media' in data['includes']:
-                    media_items = data['includes']['media']
+                if 'entities' in data and 'media' in data['entities']:
+                    media_items = data['entities']['media']
                     
                     for media in media_items:
                         if media['type'] == 'photo':
                             # 獲取原始圖片 URL
-                            image_url = media['url']
+                            image_url = media['media_url_https']
                             if '?format=' in image_url:
                                 image_url = image_url.split('?')[0] + '?format=jpg&name=orig'
                             await update.message.reply_photo(image_url)
                         elif media['type'] == 'video':
                             # 獲取影片預覽圖
-                            if 'preview_image_url' in media:
-                                await update.message.reply_photo(media['preview_image_url'])
+                            if 'media_url_https' in media:
+                                await update.message.reply_photo(media['media_url_https'])
                     return
                 
                 await update.message.reply_text('這則貼文中沒有圖片或影片！')
