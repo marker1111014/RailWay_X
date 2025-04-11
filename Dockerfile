@@ -14,12 +14,13 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 創建非 root 用戶
+RUN useradd -m appuser
+
 # 安裝 Playwright 瀏覽器
 RUN playwright install chromium
 RUN playwright install-deps
-
-# 創建非 root 用戶
-RUN useradd -m appuser
+RUN chown -R appuser:appuser /home/appuser/.cache
 
 # 複製應用程序代碼
 COPY --chown=appuser:appuser . .
