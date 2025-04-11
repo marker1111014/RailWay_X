@@ -1,16 +1,11 @@
 import os
 import re
 import logging
-import time
+import json
 import requests
-from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-
-# 禁用 SSL 警告
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # 載入環境變數
 load_dotenv()
@@ -23,25 +18,6 @@ logging.basicConfig(
 
 # 獲取環境變數
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-
-# Nitter 實例列表
-NITTER_INSTANCES = [
-    'https://nitter.net',
-    'https://nitter.cz',
-    'https://nitter.esmailelbob.xyz',
-    'https://nitter.privacydev.net',
-    'https://nitter.poast.org',
-    'https://nitter.mint.lgbt',
-    'https://nitter.foss.wtf',
-    'https://nitter.projectsegfau.lt',
-    'https://nitter.woodland.cafe',
-    'https://nitter.rawbit.ninja',
-]
-
-def get_random_nitter_instance():
-    """獲取隨機的 Nitter 實例"""
-    import random
-    return random.choice(NITTER_INSTANCES)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """發送開始訊息"""
@@ -63,47 +39,42 @@ async def extract_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         tweet_id = tweet_id.group(1)
         
-        # 嘗試不同的 Nitter 實例
-        for instance in NITTER_INSTANCES:
-            try:
-                # 構建 Nitter URL
-                nitter_url = f"{instance}/{tweet_id}"
-                
-                # 獲取頁面內容，禁用 SSL 驗證
-                response = requests.get(nitter_url, timeout=10, verify=False)
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    
-                    # 查找所有圖片
-                    images = soup.find_all('img', class_='tweet-image')
-                    if images:
-                        for img in images:
-                            if img.get('src'):
-                                # 轉換相對 URL 為絕對 URL
-                                img_url = img['src']
-                                if img_url.startswith('/'):
-                                    img_url = instance + img_url
-                                await update.message.reply_photo(img_url)
-                        return
-                    
-                    # 如果沒有找到圖片，檢查是否有影片預覽圖
-                    video_preview = soup.find('img', class_='tweet-video-preview')
-                    if video_preview and video_preview.get('src'):
-                        preview_url = video_preview['src']
-                        if preview_url.startswith('/'):
-                            preview_url = instance + preview_url
-                        await update.message.reply_photo(preview_url)
-                        return
-                    
-                    # 如果這個實例沒有找到圖片，繼續嘗試下一個
-                    continue
-                    
-            except Exception as e:
-                logging.error(f"Error with instance {instance}: {str(e)}")
-                continue
+        # 使用 Twitter oEmbed API
+        oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}"
         
-        # 如果所有實例都失敗了
-        await update.message.reply_text('無法找到圖片，請確認貼文是否包含圖片或稍後再試。')
+        try:
+            response = requests.get(oembed_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                html_content = data.get('html', '')
+                
+                # 從 HTML 中提取圖片 URL
+                img_urls = re.findall(r'https://pbs\.twimg\.com/media/[^"\']+', html_content)
+                
+                if img_urls:
+                    # 轉換圖片 URL 為高質量版本
+                    for img_url in img_urls:
+                        # 移除圖片大小限制
+                        img_url = re.sub(r'&name=\w+', '&name=orig', img_url)
+                        await update.message.reply_photo(img_url)
+                    return
+                
+                # 如果沒有找到圖片，檢查是否有影片
+                if 'video' in html_content.lower():
+                    # 提取影片預覽圖
+                    preview_urls = re.findall(r'https://pbs\.twimg\.com/tweet_video_thumb/[^"\']+', html_content)
+                    if preview_urls:
+                        for preview_url in preview_urls:
+                            await update.message.reply_photo(preview_url)
+                        return
+                
+                await update.message.reply_text('這則貼文中沒有圖片或影片！')
+            else:
+                await update.message.reply_text('無法獲取貼文內容，請稍後再試。')
+                
+        except Exception as e:
+            logging.error(f"Error fetching tweet: {str(e)}")
+            await update.message.reply_text('處理貼文時發生錯誤，請稍後再試。')
                     
     except Exception as e:
         logging.error(f"Error: {str(e)}")
